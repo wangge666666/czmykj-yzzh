@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>多人视频复刻 · DepthFlow</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260808-5">
+  <link rel="stylesheet" href="/static/multi.css?v=20260807-1">
+  <link rel="stylesheet" href="/static/workflow_shell.css?v=20260823-2">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="返回项目中心">
+      <span class="brand-mark">多</span>
+      <span><strong>多人视频复刻</strong><small>DepthFlow Project 02 · 纯 API</small></span>
+    </a>
+    <div class="system-state" aria-label="系统配置状态">
+      <span id="arkBadge" class="badge waiting"><i></i>API 检查中</span>
+      <span id="channelBadge" class="badge waiting"><i></i>临时通道检查中</span>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero multi-hero">
+      <div class="eyebrow">MULTI-PERSON MOTION REPLICATION</div>
+      <h1>分别锁定每一位角色，<br><span>共同复刻同一段表演。</span></h1>
+      <p>支持 2–4 位人物。每位角色分别绑定人物形象与服装，通过角色位置描述维持身份、动作、遮挡和互动关系。</p>
+      <div class="hero-pills"><span>2–4 人动态配置</span><span>最多 9 张参考图</span><span>人物身份防串位</span><span>纯 API 自动成片</span></div>
+    </section>
+
+    <nav class="stepper" aria-label="多人复刻工作流程">
+      <a href="#step-source"><b>01</b><span>原视频</span></a><i></i>
+      <a href="#step-depth"><b>02</b><span>深度转换</span></a><i></i>
+      <a href="#step-actors"><b>03</b><span>多人绑定</span></a><i></i>
+      <a href="#step-generate"><b>04</b><span>生成成片</span></a>
+    </nav>
+
+    <form id="multiWorkflowForm" novalidate>
+      <section class="workspace-grid">
+        <article id="step-source" class="panel upload-panel">
+          <div class="panel-heading"><span class="step-number">01</span><div><h2>提交多人原视频</h2><p>提供所有人物的动作、互动、构图和镜头依据</p></div></div>
+          <label class="dropzone" id="videoDropzone" for="referenceVideo">
+            <input id="referenceVideo" type="file" accept="video/mp4,video/quicktime,.mp4,.mov">
+            <span class="upload-icon">＋</span><strong>点击选择或拖入多人视频</strong>
+            <small>MP4 / MOV · 输出自动限制在 14.5 秒、200 MB 以内</small>
+            <span id="videoFileName" class="file-name">尚未选择文件</span>
+          </label>
+          <div class="field compact-field"><label for="blurRange">运动模糊补偿帧 <em>可选</em></label><input id="blurRange" type="text" placeholder="例如 291:305；通常留空"></div>
+        </article>
+
+        <article id="step-depth" class="panel depth-panel multi-depth-panel">
+          <div class="panel-heading"><span class="step-number">02</span><div><h2>生成多人深度视频</h2><p>保留全部人物的轮廓、前后遮挡和空间距离</p></div></div>
+          <div class="multi-depth-visual" aria-hidden="true">
+            <div class="depth-figure figure-one"><i></i><b></b><span></span></div>
+            <div class="depth-figure figure-two"><i></i><b></b><span></span></div>
+            <div class="multi-floor"></div><div class="scanline"></div>
+          </div>
+          <div class="depth-actions">
+            <button id="depthBtn" class="secondary-button" type="button">仅转换并预览深度视频</button>
+            <span id="depthState" class="inline-state">等待多人原视频</span>
+          </div>
+        </article>
+      </section>
+
+      <section id="step-actors" class="panel actors-panel">
+        <div class="actors-heading">
+          <div class="panel-heading"><span class="step-number">03</span><div><h2>绑定原片中的每一位人物</h2><p>人物和服装按固定顺序映射为 @图片 1–8</p></div></div>
+          <div class="actor-controls">
+            <span id="referenceCount">5 / 9 张参考图</span>
+            <button id="removeActorBtn" class="ghost-button small" type="button">减少人物</button>
+            <button id="addActorBtn" class="secondary-button" type="button">＋ 添加人物</button>
+          </div>
+        </div>
+        <div id="actorList" class="actor-list"></div>
+
+        <article class="shared-scene-card">
+          <div>
+            <span id="sceneReferenceLabel" class="reference-chip">@图片 5</span>
+            <h3>全部人物共享的场景参考</h3>
+            <p>场景图是所有角色共同所在的最终环境，建议构图完整、透视清晰。</p>
+          </div>
+          <label class="mini-drop scene-drop" for="sceneImage">
+            <input id="sceneImage" type="file" accept="image/*,.heic,.heif">
+            <span>选择场景图片</span><small id="sceneFileName">尚未选择场景图</small>
+          </label>
+        </article>
+
+        <div class="notice"><b>真人素材说明</b><span>真人形象建议为每位角色填写已授权的 <code>asset://</code> ID；本地人物图片适合虚构或 AI 角色。服装图请尽量不包含清晰真人面部。</span></div>
+      </section>
+
+      <section id="step-generate" class="panel generation-panel">
+        <div class="panel-heading"><span class="step-number">04</span><div><h2>生成多人复刻成片</h2><p>模型会按人物卡片顺序绑定身份，按角色定位匹配原片人物</p></div></div>
+        <div class="settings-grid multi-settings">
+          <div class="field model-field"><label for="model">模型</label><input id="model" type="text" value="doubao-seedance-2-0-260128"></div>
+          <div class="field"><label for="resolution">分辨率</label><select id="resolution"><option>480p</option><option selected>720p</option><option>1080p</option><option>4k</option></select></div>
+          <div class="field"><label for="ratio">画面比例</label><select id="ratio"><option selected>adaptive</option><option>16:9</option><option>4:3</option><option>1:1</option><option>3:4</option><option>9:16</option><option>21:9</option></select></div>
+          <div class="field"><label for="duration">自动匹配时长</label><input id="duration" type="number" min="4" max="15" value="15" readonly><small id="durationHint">选择原视频后自动匹配 4–15 秒</small></div>
+        </div>
+        <div class="toggle-row"><label><input id="generateAudio" type="checkbox"><span></span>生成声音</label><label><input id="watermark" type="checkbox"><span></span>添加 AI 水印</label><label><input id="deleteTos" type="checkbox" checked><span></span>生成后删除临时公开视频</label></div>
+        <div class="prompt-block">
+          <div class="prompt-label"><label for="prompt">自动生成的多人提示词</label><button id="resetPromptBtn" class="text-button" type="button">按当前人物重新生成</button></div>
+          <textarea id="prompt" rows="11"></textarea>
+          <small>修改“原片角色定位”后提示词会自动更新；手动编辑后可用右侧按钮恢复。</small>
+        </div>
+        <details class="advanced"><summary>可选：使用你自己的深度视频公网 URL</summary><div class="field"><label for="depthReference">公网 URL / asset:// ID</label><input id="depthReference" type="url" placeholder="通常留空，系统会自动创建临时地址"></div></details>
+        <div class="submit-row">
+          <div class="submit-copy"><b>多人复刻生成</b><small>可复用当前深度视频，也可以从新原视频开始一键完成</small></div>
+          <div class="submit-buttons"><button id="reuseDepthBtn" class="secondary-button" type="button">已有深度：直接生成多人片</button><button id="fullBtn" class="primary-button" type="button">原视频 → 深度 → 多人成片</button></div>
+        </div>
+      </section>
+    </form>
+
+    <section class="panel task-panel">
+      <div class="panel-heading compact-heading"><span class="step-number neutral">●</span><div><h2>多人任务进度与成片</h2><p>深度视频和最终成片分别预览，云端百分比为阶段估算</p></div></div>
+      <div class="recover-row"><input id="recoverTaskId" type="text" placeholder="输入 Seedance 任务 ID，例如 cgt-..."><button id="recoverBtn" class="ghost-button" type="button">恢复查询</button></div>
+      <div id="emptyTask" class="empty-task"><span>◎</span><b>还没有多人复刻任务</b><small>开始后，这里会显示处理日志、深度视频与最终成片。</small></div>
+      <div id="activeTask" class="active-task hidden">
+        <div class="task-summary"><div><span id="jobKind" class="job-kind">多人复刻</span><h3 id="jobStage">正在准备</h3><small id="cloudTaskId"></small></div><strong id="progressPercent">0%</strong></div>
+        <div class="progress-track"><span id="progressBar"></span></div><pre id="jobLogs" class="job-logs"></pre>
+        <div id="resultArea" class="preview-grid hidden">
+          <article id="depthResultArea" class="preview-card hidden">
+            <div class="preview-heading"><div><span>@视频 1</span><b>多人深度视频</b></div><small>全部人物的空间与动作约束</small></div>
+            <video id="depthResultVideo" controls playsinline preload="metadata"></video>
+            <div class="result-actions"><a id="depthDownloadLink" class="secondary-button" href="#">下载深度视频</a></div>
+          </article>
+          <article id="finalResultArea" class="preview-card hidden">
+            <div class="preview-heading"><div><span>Seedance 2.0</span><b>多人复刻预览</b></div><small id="seedancePreviewCaption">云端状态持续同步</small></div>
+            <div id="seedanceLivePreview" class="seedance-live hidden" aria-live="polite">
+              <div class="seedance-pulse"><i></i><i></i><i></i></div><strong id="seedanceProgressPercent">0%</strong><b id="seedanceCloudStatus">正在准备多人任务</b>
+              <div class="seedance-progress-track"><span id="seedanceProgressBar"></span></div><small id="seedanceProgressNote">等待云端任务 ID</small>
+            </div>
+            <video id="finalResultVideo" class="hidden" controls playsinline preload="metadata"></video>
+            <div id="finalResultActions" class="result-actions hidden"><a id="finalDownloadLink" class="primary-button" href="#">下载多人复刻成片</a></div>
+          </article>
+          <div class="preview-folder-action"><button id="openFolderBtn" class="ghost-button" type="button">打开本地结果目录</button></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/project_registry.js?v=20260823-2" defer></script>
+  <script src="/static/workflow_common.js?v=20260823-2" defer></script>
+  <script src="/static/upload_preview.js?v=20260808-1" defer></script>
+  <script src="/static/multi.js?v=20260811-3" defer></script>
+</body>
+</html>

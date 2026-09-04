@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="DepthFlow 本地视频复刻项目中心">
+  <title>视频复刻项目中心 · DepthFlow</title>
+  <link rel="stylesheet" href="/static/projects.css?v=20260823-2">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="返回项目中心首页">
+      <span class="brand-mark">DF</span>
+      <span><b>DepthFlow Studio</b><small>本地视频复刻工作台</small></span>
+    </a>
+    <div class="system-state"><i></i>本地项目中心</div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="eyebrow">VIDEO REPLICATION WORKSPACE</div>
+      <h1>选择要使用的<br><em>视频复刻项目</em></h1>
+      <p>三个项目使用同一套页面外壳与基础能力，但生成流程、任务状态和结果彼此隔离。局部替换统一进入“衣装智换”，完整复刻由虚拟或真实人物长视频重绘承担。</p>
+      <div class="hero-summary" aria-label="项目概览">
+        <span><b>2</b> 个能力组</span><span><b>3</b> 个独立项目</span><span><b>1</b> 套统一操作外壳</span>
+      </div>
+    </section>
+
+    <section class="project-section" aria-labelledby="projectsTitle">
+      <div class="section-heading">
+        <div><span>PROJECTS</span><h2 id="projectsTitle">复刻项目</h2></div>
+        <p>项目之间互不覆盖，素材、任务与生成结果分别管理。</p>
+      </div>
+
+      <div class="project-grid">
+        <article class="project-card project-card-wide project-card-active" data-project-id="wardrobe">
+          <div class="card-top"><span class="project-number">03–05</span><span class="status status-ready"><i></i>三合一</span></div>
+          <div class="wide-content">
+            <div>
+              <div class="card-title"><span class="card-symbol">衣</span><div><h3>衣装智换</h3><p>Character · Scene · Wardrobe replacement</p></div></div>
+              <p class="card-description">先对原片人脸打码并生成白膜动作母版，再选择只更换人物、场景、服装，或在“随心换”中自由组合三类参考；缺失的原片参考由 Seedream 5.0 提取，最终由 Seedance 2.5 生成。</p>
+            </div>
+            <div class="shot-flow" aria-label="衣装智换四种功能"><span>原片打码</span><i>→</i><span>白膜母版</span><i>→</i><div><b>只更换人物</b><b>只更换场景</b><b>只更换服装</b><b>随心换</b></div><i>→</i><span>Seedance 2.5</span></div>
+          </div>
+          <a class="project-action" href="/projects/wardrobe">进入衣装智换 <span>→</span></a>
+        </article>
+
+        <article class="project-card project-card-wide project-card-active" data-project-id="long-video">
+          <div class="card-top"><span class="project-number">06</span><span class="status status-ready"><i></i>可使用</span></div>
+          <div class="wide-content">
+            <div>
+              <div class="card-title"><span class="card-symbol">虚</span><div><h3>虚拟人物复刻重绘</h3><p>3D / 2D / Virtual character redraw</p></div></div>
+              <p class="card-description">保留已验证的稳定版流程，面向3D渲染、2D动画和其他虚拟人物素材，完成逐镜白模与最终重绘。</p>
+            </div>
+            <div class="shot-flow" aria-label="视频重绘处理流程"><span>原片拆镜</span><i>→</i><div><b>人脸打码</b><b>台词表演</b><b>白模绿幕</b></div><i>→</i><span>人物服装场景</span><i>→</i><span>最终重绘</span></div>
+          </div>
+          <a class="project-action" href="/projects/long-video">进入虚拟人物项目 <span>→</span></a>
+        </article>
+
+        <article class="project-card project-card-wide project-card-active" data-project-id="real-long-video">
+          <div class="card-top"><span class="project-number">07</span><span class="status status-ready"><i></i>独立项目</span></div>
+          <div class="wide-content">
+            <div>
+              <div class="card-title"><span class="card-symbol">真</span><div><h3>真实人物复刻重绘</h3><p>Authorized real-person Asset redraw</p></div></div>
+              <p class="card-description">上传已获授权的真人素材并绑定为火山角色库 Active Asset，再结合服装、场景和白膜完成逐镜或整段重绘；不再生成遮眼图和素描身份图。</p>
+            </div>
+            <div class="shot-flow" aria-label="真人重绘处理流程"><span>授权真人图</span><i>→</i><div><b>上传角色库</b><b>审核为 Active</b><b>绑定人物槽位</b></div><i>→</i><span>白膜动作</span><i>→</i><span>最终重绘</span></div>
+          </div>
+          <a class="project-action" href="/projects/real-long-video">进入真实人物项目 <span>→</span></a>
+        </article>
+      </div>
+    </section>
+
+    <section class="architecture-note">
+      <div><span>冻结原则</span><h2>能用的项目保持稳定，新能力独立生长。</h2></div>
+      <p>导航、错误提示、付费说明和媒体对比由公共层提供；衣装智换与两个长视频项目继续保持各自的数据结构、提示词模板和任务接口，避免一处修改破坏其他已验证流程。旧局部替换页面仅保留为历史兼容，不再作为首页入口。</p>
+    </section>
+  </main>
+
+  <footer><span>DepthFlow Studio</span><small>本地工作台 · 素材与结果保存在你的电脑中</small></footer>
+  <script src="/static/project_registry.js?v=20260823-2" defer></script>
+  <script src="/static/projects.js?v=20260823-2" defer></script>
+</body>
+</html>

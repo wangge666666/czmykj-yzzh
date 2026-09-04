@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>深度视频 · Seedance 自动工作流</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260808-5">
+  <link rel="stylesheet" href="/static/workflow_shell.css?v=20260823-2">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="返回顶部">
+      <span class="brand-mark">D</span>
+      <span>
+        <strong>DepthFlow</strong>
+        <small>Seedance 2.0 本地工作流</small>
+      </span>
+    </a>
+    <div class="system-state" aria-label="系统配置状态">
+      <span id="arkBadge" class="badge waiting"><i></i>API 检查中</span>
+      <span id="tosBadge" class="badge waiting"><i></i>临时通道检查中</span>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="eyebrow">MOTION TRANSFER PIPELINE</div>
+      <h1>保留动作与运镜，<br><span>替换人物、服装和场景。</span></h1>
+      <p>系统复用本机最近生成的合规深度视频，通过纯 API 提交人物、服装、场景和动作参考，并自动下载最终成片。</p>
+      <div class="hero-pills">
+        <span>近白远黑深度</span>
+        <span>动作与镜头复刻</span>
+        <span>纯 API 自动生成</span>
+      </div>
+    </section>
+
+    <nav class="stepper" aria-label="工作流程">
+      <a href="#step-1"><b>01</b><span>参考视频</span></a>
+      <i></i>
+      <a href="#step-2"><b>02</b><span>深度转换</span></a>
+      <i></i>
+      <a href="#step-3"><b>03</b><span>替换素材</span></a>
+      <i></i>
+      <a href="#step-4"><b>04</b><span>生成成片</span></a>
+    </nav>
+
+    <form id="workflowForm" novalidate>
+      <section class="workspace-grid">
+        <article id="step-1" class="panel upload-panel">
+          <div class="panel-heading">
+            <span class="step-number">01</span>
+            <div>
+              <h2>提交参考视频</h2>
+              <p>动作、表演节奏和镜头运动的原始依据</p>
+            </div>
+          </div>
+
+          <label class="dropzone" id="videoDropzone" for="referenceVideo">
+            <input id="referenceVideo" name="reference_video" type="file" accept="video/mp4,video/quicktime,.mp4,.mov">
+            <span class="upload-icon">＋</span>
+            <strong>点击选择或拖入视频</strong>
+            <small>MP4 / MOV · 建议 2–15 秒 · 24–60 FPS；深度输出自动截至 14.5 秒</small>
+            <span id="videoFileName" class="file-name">尚未选择文件</span>
+          </label>
+
+          <div class="field compact-field">
+            <label for="blurRange">运动模糊补偿帧 <em>可选</em></label>
+            <input id="blurRange" name="blur_range" type="text" placeholder="例如 291:305；通常留空">
+          </div>
+        </article>
+
+        <article id="step-2" class="panel depth-panel">
+          <div class="panel-heading">
+            <span class="step-number">02</span>
+            <div>
+              <h2>生成深度视频</h2>
+              <p>白色最近，近黑最远；输出最长 14.5 秒且不超过 200 MB</p>
+            </div>
+          </div>
+
+          <div class="depth-visual" aria-hidden="true">
+            <div class="depth-person">
+              <span class="head"></span>
+              <span class="body"></span>
+              <span class="arm left"></span>
+              <span class="arm right"></span>
+            </div>
+            <div class="depth-floor"></div>
+            <div class="scanline"></div>
+          </div>
+
+          <div class="depth-actions">
+            <button id="depthBtn" class="secondary-button" type="button">功能一：仅转换并预览深度视频</button>
+            <span id="depthState" class="inline-state">等待参考视频</span>
+          </div>
+        </article>
+      </section>
+
+      <section id="step-3" class="panel assets-panel">
+        <div class="panel-heading">
+          <span class="step-number">03</span>
+          <div>
+            <h2>选择需要替换的视觉素材</h2>
+            <p>上传顺序会固定映射为 @图片 1、@图片 2、@图片 3</p>
+          </div>
+        </div>
+
+        <div class="asset-grid">
+          <article class="asset-card person-card">
+            <div class="asset-label"><span>@图片 1</span><b>人物形象</b></div>
+            <div class="segmented" role="tablist" aria-label="人物素材类型">
+              <button class="active" type="button" data-person-mode="file">虚构 / AI 图片</button>
+              <button type="button" data-person-mode="asset">授权真人 ID</button>
+            </div>
+            <label id="personFileBox" class="mini-drop" for="personImage">
+              <input id="personImage" name="person_image" type="file" accept="image/*,.heic,.heif">
+              <span>选择人物图片</span>
+              <small id="personFileName">建议正面全身、轮廓清楚</small>
+            </label>
+            <div id="personAssetBox" class="field hidden">
+              <label for="personAsset">授权素材 ID</label>
+              <input id="personAsset" name="person_asset" type="text" placeholder="asset://asset-...">
+              <small>需先在火山方舟完成人像授权</small>
+            </div>
+          </article>
+
+          <article class="asset-card">
+            <div class="asset-label"><span>@图片 2</span><b>服装参考</b></div>
+            <label class="mini-drop" for="clothingImage">
+              <input id="clothingImage" name="clothing_image" type="file" accept="image/*,.heic,.heif">
+              <span>选择服装图片</span>
+              <small id="clothingFileName">建议裁掉真人脸部</small>
+            </label>
+          </article>
+
+          <article class="asset-card">
+            <div class="asset-label"><span>@图片 3</span><b>场景参考</b></div>
+            <label class="mini-drop" for="sceneImage">
+              <input id="sceneImage" name="scene_image" type="file" accept="image/*,.heic,.heif">
+              <span>选择场景图片</span>
+              <small id="sceneFileName">构图完整、透视清晰</small>
+            </label>
+          </article>
+        </div>
+
+        <div class="notice">
+          <b>真人素材说明</b>
+          <span>Seedance 2.0 不接受普通真人脸图片。真人请使用已授权的 <code>asset://</code> ID；本地图片适合虚构或 AI 角色。</span>
+        </div>
+      </section>
+
+      <section id="step-4" class="panel generation-panel">
+        <div class="panel-heading">
+          <span class="step-number">04</span>
+          <div>
+            <h2>设置生成参数</h2>
+            <p>默认配置优先保证动作、空间关系和镜头运动</p>
+          </div>
+        </div>
+
+        <div class="settings-grid">
+          <div class="field model-field api-fallback">
+            <label for="generationChannel">提交方式</label>
+            <select id="generationChannel" name="generation_channel">
+              <option value="api" selected>Seedance 纯 API（自动临时上传）</option>
+            </select>
+          </div>
+          <div class="field model-field">
+            <label for="model">模型</label>
+            <input id="model" name="model" type="text" value="doubao-seedance-2-0-260128">
+          </div>
+          <div class="field">
+            <label for="resolution">分辨率</label>
+            <select id="resolution" name="resolution">
+              <option>480p</option>
+              <option selected>720p</option>
+              <option>1080p</option>
+              <option>4k</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="ratio">画面比例</label>
+            <select id="ratio" name="ratio">
+              <option selected>adaptive</option>
+              <option>16:9</option>
+              <option>4:3</option>
+              <option>1:1</option>
+              <option>3:4</option>
+              <option>9:16</option>
+              <option>21:9</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="duration">自动匹配时长（秒）</label>
+            <input id="duration" name="duration" type="number" min="4" max="15" value="15" readonly aria-readonly="true">
+            <small id="durationHint">选择原视频后自动匹配；模型支持 4–15 秒</small>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <label><input id="generateAudio" type="checkbox"><span></span>生成声音</label>
+          <label><input id="watermark" type="checkbox"><span></span>添加 AI 水印</label>
+          <label class="api-fallback"><input id="deleteTos" type="checkbox" checked><span></span>任务结束后立即删除临时公开视频</label>
+        </div>
+
+        <div class="prompt-block">
+          <div class="prompt-label">
+            <label for="prompt">Seedance 提示词</label>
+            <button id="resetPromptBtn" class="text-button" type="button">恢复推荐提示词</button>
+          </div>
+          <textarea id="prompt" name="prompt" rows="9"></textarea>
+          <small>深度视频只作为几何和时序约束，默认提示词会明确禁止生成黑白深度风格。</small>
+        </div>
+
+        <details class="advanced api-fallback">
+          <summary>可选：使用你自己的视频直链</summary>
+          <div class="field">
+            <label for="depthReference">深度视频公网 URL / asset:// ID</label>
+            <input id="depthReference" name="depth_reference" type="url" placeholder="https://.../depth.mp4">
+            <small>通常留空，系统会免费生成 1 小时有效的临时 MP4 直链并在任务结束后删除。</small>
+          </div>
+        </details>
+
+        <div class="submit-row">
+          <div class="submit-copy">
+            <b>功能二：一键完整生成</b>
+            <small>可直接复用当前深度视频，也可以从新原视频开始完整生成</small>
+          </div>
+          <div class="submit-buttons">
+            <button id="reuseDepthBtn" class="secondary-button" type="button">已有深度：直接生成成片</button>
+            <button id="fullBtn" class="primary-button" type="button">原视频 → 深度 → 成片</button>
+          </div>
+        </div>
+      </section>
+    </form>
+
+    <section class="panel task-panel">
+      <div class="panel-heading compact-heading">
+        <span class="step-number neutral">•</span>
+        <div>
+          <h2>任务进度与成片</h2>
+          <p>页面可关闭；云端任务可用任务 ID 恢复查询</p>
+        </div>
+      </div>
+
+      <div class="recover-row">
+        <input id="recoverTaskId" type="text" placeholder="输入 Seedance 任务 ID，例如 cgt-...">
+        <button id="recoverBtn" class="ghost-button" type="button">恢复查询</button>
+      </div>
+
+      <div id="emptyTask" class="empty-task">
+        <span>◎</span>
+        <b>还没有运行中的任务</b>
+        <small>生成开始后，这里会显示阶段、日志、深度视频和最终成片。</small>
+      </div>
+
+      <div id="activeTask" class="active-task hidden">
+        <div class="task-summary">
+          <div>
+            <span id="jobKind" class="job-kind">完整流程</span>
+            <h3 id="jobStage">正在准备</h3>
+            <small id="cloudTaskId"></small>
+          </div>
+          <strong id="progressPercent">0%</strong>
+        </div>
+        <div class="progress-track"><span id="progressBar"></span></div>
+        <pre id="jobLogs" class="job-logs"></pre>
+        <div id="resultArea" class="preview-grid hidden">
+          <article id="depthResultArea" class="preview-card hidden">
+            <div class="preview-heading">
+              <div><span>@视频 1</span><b>深度视频</b></div>
+              <small>生成后立即可预览，不必等待最终成片</small>
+            </div>
+            <video id="depthResultVideo" controls playsinline preload="metadata"></video>
+            <div class="result-actions">
+              <a id="depthDownloadLink" class="secondary-button" href="#">下载深度视频</a>
+            </div>
+          </article>
+          <article id="finalResultArea" class="preview-card hidden">
+            <div class="preview-heading">
+              <div><span>Seedance 2.0</span><b>生成预览</b></div>
+              <small id="seedancePreviewCaption">云端状态持续同步</small>
+            </div>
+            <div id="seedanceLivePreview" class="seedance-live hidden" aria-live="polite">
+              <div class="seedance-pulse"><i></i><i></i><i></i></div>
+              <strong id="seedanceProgressPercent">0%</strong>
+              <b id="seedanceCloudStatus">正在准备 Seedance 任务</b>
+              <div class="seedance-progress-track"><span id="seedanceProgressBar"></span></div>
+              <small id="seedanceProgressNote">等待云端任务 ID</small>
+            </div>
+            <video id="finalResultVideo" class="hidden" controls playsinline preload="metadata"></video>
+            <div id="finalResultActions" class="result-actions hidden">
+              <a id="finalDownloadLink" class="primary-button" href="#">下载最终成片</a>
+            </div>
+          </article>
+          <div class="preview-folder-action">
+            <button id="openFolderBtn" class="ghost-button" type="button">打开本地结果目录</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/project_registry.js?v=20260823-2" defer></script>
+  <script src="/static/workflow_common.js?v=20260823-2" defer></script>
+  <script src="/static/upload_preview.js?v=20260808-1" defer></script>
+  <script src="/static/app.js?v=20260807-2" defer></script>
+</body>
+</html>

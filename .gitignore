@@ -1,0 +1,37 @@
+.env
+.env.*
+!.env.example
+!deploy/.env.production.example
+
+# Local runtimes and caches
+.venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local application state and large bundled runtimes
+.hf-v2v/
+.seedance-browser-profile/
+backups/
+logs/
+models/
+tools/blender-*
+
+# Generated and downloaded media
+runs/
+output/
+work/
+downloads/
+tools/cloudflared.exe
+tools/cloudflared-*.download
+
+# Server diagnostics and local source-analysis snapshots
+*.log
+/*.png
+
+# Locally produced source packages
+packages/
+dist/
+
+# Dedicated local browser profile for the Seedance web workflow
+.seedance-browser-profile/

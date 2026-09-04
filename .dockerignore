@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+.venv*
+__pycache__
+*.pyc
+runs
+logs
+output
+downloads
+.seedance-browser-profile
+server*.log
+backups
+*.mp4
+*.mov

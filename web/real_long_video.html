@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>真实人物复刻重绘 · DepthFlow</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260808-5">
+  <link rel="stylesheet" href="/static/person.css?v=20260807-3">
+  <link rel="stylesheet" href="/static/long_video.css?v=20260822-08&amp;layout=3">
+  <link rel="stylesheet" href="/static/workflow_shell.css?v=20260824-3">
+</head>
+<body>
+  <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="返回项目中心"><span class="brand-mark long-mark">真</span><span><strong>真实人物复刻重绘</strong><small>Authorized person · Ark Character Asset → White Model → Redraw</small></span></a>
+    <div class="system-state"><span id="arkBadge" class="badge waiting"><i></i>API 检查中</span><span id="channelBadge" class="badge waiting"><i></i>临时通道检查中</span></div>
+  </header>
+  <main>
+    <section class="hero long-hero">
+      <div class="eyebrow">REAL PERSON · AUTHORIZED CHARACTER-ASSET WORKFLOW</div>
+      <h1>原片先打码，再做白模，<br><span>最后完成整片重绘。</span></h1>
+      <p>人物身份统一进入火山 AIGC 虚拟人像库，审核通过后以角色 Asset 进入最终重绘。</p>
+      <div class="hero-pills"><span>AIGC虚拟人像库</span><span>火山角色入库</span><span>Active Asset绑定</span><span>角色库最终重绘</span></div>
+    </section>
+
+    <nav class="stepper"><a href="#source"><b>01</b><span>长视频</span></a><i></i><a href="#shots"><b>02</b><span>分析分镜</span></a><i></i><a href="#preprocess"><b>03</b><span>打码与白模</span></a><i></i><a href="#references"><b>04</b><span>角色场景</span></a><i></i><a href="#generate"><b>05</b><span>最终重绘</span></a></nav>
+
+    <form id="longWorkflowForm" novalidate>
+      <section class="workspace-grid">
+        <article id="source" class="panel upload-panel">
+          <div class="panel-heading"><span class="step-number">01</span><div><h2>提交长视频原片</h2><p>支持自动识别硬切与明显场景变化</p></div></div>
+          <label class="dropzone" for="referenceVideo"><input id="referenceVideo" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"><span class="upload-icon">＋</span><strong>选择或拖入长视频</strong><small>逐帧识别全部真实转场；短于4秒的分镜也会完整保留</small><span id="videoFileName" class="file-name">尚未选择文件</span></label>
+          <div class="field"><label for="sensitivity">分镜检测灵敏度 <em id="sensitivityValue">0.30</em></label><input id="sensitivity" type="range" min="0.08" max="0.75" step="0.01" value="0.30"><small>数值越低越容易识别细微转场；推荐先使用0.30。检测到的短分镜不会再被合并。</small></div>
+          <div class="field"><label for="manualCuts">手动补充切点 <em>可选</em></label><input id="manualCuts" type="text" inputmode="decimal" placeholder="例如：3.73, 5.87, 7.73"><small>自动检测仍有遗漏时填写秒数；这些切点会被强制保留，不受分镜时长限制。</small></div>
+        </article>
+        <article id="shots" class="panel analysis-panel">
+          <div class="panel-heading"><span class="step-number">02</span><div><h2>免费分析、拆分并估算人数</h2><p>只在本机运行；短分镜保持原动作速度，片尾定格延长到生成时长，成片无变速裁回原时长</p></div></div>
+          <div class="analysis-visual"><span>长视频</span><i>→</i><div><b>SHOT 01 · 1人</b><b>SHOT 02 · 2人</b><b>SHOT 03 · 0人</b></div></div>
+          <button id="analyzeBtn" class="secondary-button prepare-button" type="button">免费分析分镜</button><span id="analysisState" class="inline-state">尚未分析</span>
+        </article>
+      </section>
+
+      <section id="preprocess" class="panel redraw-pipeline-panel">
+        <div class="panel-heading"><span class="step-number">03</span><div><h2>隐私打码、表演提取与白模母版</h2><p>原片先在本地遮脸；白模与最终重绘分别独立生成，任何付费步骤都需要你手动点击</p></div></div>
+        <div class="redraw-stage-grid">
+          <article class="redraw-stage-card">
+            <span class="stage-chip local">LOCAL · 免费</span><h3>① 多脸时序打码</h3><p>YuNet 每帧检测并跨帧跟踪，扩大遮罩覆盖额头、下颌与快速运动区域，输出保留原声。</p>
+            <div class="compact-setting-grid"><div class="field"><label for="blockSize">马赛克块大小</label><input id="blockSize" type="number" min="8" max="48" value="18"></div><div class="field"><label for="faceScoreThreshold">检测阈值</label><input id="faceScoreThreshold" type="number" min="0.30" max="0.90" step="0.05" value="0.55"></div></div>
+            <button id="mosaicBtn" class="secondary-button" type="button" disabled>生成完整打码视频</button>
+            <small id="mosaicStatusHint" class="pipeline-prerequisite" role="status">请先完成免费分镜分析。</small>
+          </article>
+          <article class="redraw-stage-card">
+            <span class="stage-chip cloud">ARK · 需确认</span><h3>② 台词与表演神色</h3><p>逐镜提取原台词、说话人、语气、时间点，以及整体情绪、眼神、表情和姿态证据。</p>
+            <label class="consent-row"><input id="performanceConsent" type="checkbox"><span>我同意临时上传原片分镜用于多模态分析</span></label>
+            <button id="performanceBtn" class="secondary-button" type="button" disabled>分析全部分镜的台词与表演</button>
+          </article>
+          <article class="redraw-stage-card white-stage-card">
+            <span class="stage-chip paid">SEEDANCE 2.0 · 480P · 按镜计费</span><h3>③ 白模绿幕动作母版</h3><p>无需上传白模参考。固定使用480p低成本规格，只参考打码分镜的动作与运镜。</p>
+            <div class="field"><label for="whiteModelRatio">白模画面尺寸</label><select id="whiteModelRatio"><option value="adaptive" selected>跟随原片（推荐）</option><option value="9:16">9:16 竖屏</option><option value="16:9">16:9 横屏</option><option value="3:4">3:4 竖屏</option><option value="4:3">4:3 横屏</option><option value="1:1">1:1 方形</option><option value="21:9">21:9 超宽屏</option></select><small>只控制白模。“跟随原片”会按每个分镜的原始比例生成，不会读取最终成片的比例选项。</small></div>
+            <div class="fixed-white-rules" aria-label="固定白模规则"><b>固定输出规则</b><span>光滑光头 · 无发型毛发</span><span>不透明纯白素体 · 无原服装配件</span><span>中性封闭人体外壳 · 无身份五官</span><span>纯白哑光立体材质 · 标准绿幕 #00B140</span></div>
+            <label class="consent-row"><input id="privacyReviewConfirmed" type="checkbox" disabled><span>我已逐镜检查打码视频，确认没有漏脸</span></label>
+            <button id="whiteModelBtn" class="primary-button" type="button" disabled>按分镜生成并合并白模视频</button>
+            <small id="whiteModelStatusHint" class="pipeline-prerequisite" role="status">请先在步骤①生成完整打码视频。</small>
+          </article>
+        </div>
+        <div class="intermediate-preview-grid">
+          <article id="mosaicPreviewArea" class="preview-card hidden"><div class="preview-heading"><div><span>PRIVACY</span><b>完整打码视频</b></div><small>提交白模前必须人工复核</small></div><video id="mosaicVideo" controls playsinline preload="metadata"></video><div class="result-actions"><a id="mosaicDownloadLink" class="secondary-button" href="#">下载打码视频</a></div></article>
+          <article id="whitePreviewArea" class="preview-card hidden"><div class="preview-heading"><div><span>WHITE MODEL</span><b>白模绿幕动作母版</b></div><small>最终重绘的动作与运镜参考</small></div><video id="whiteModelVideo" controls playsinline preload="metadata"></video><div class="result-actions"><a id="whiteModelDownloadLink" class="secondary-button" href="#">下载白模视频</a></div></article>
+        </div>
+      </section>
+
+      <section id="references" class="panel actor-library-panel">
+        <div class="actors-heading">
+          <div class="panel-heading"><span class="step-number">04</span><div><h2>建立火山 AIGC 虚拟人像与多场景素材库</h2><p>上传虚拟人物图后直接提交 AIGC 角色库；审核通过后以 Asset 锁定人物身份，不再生成眼部遮挡图或素描图</p></div></div>
+          <div class="actor-controls"><span id="actorCountLabel">1 位角色</span><button id="removeActorBtn" class="ghost-button small" type="button">减少人物</button><button id="addActorBtn" class="secondary-button" type="button">＋ 添加人物</button></div>
+        </div>
+        <div id="actorList" class="long-actor-list"></div>
+        <div class="real-reference-prep">
+          <label class="consent-row"><input id="realPersonAuthorized" type="checkbox"><span>我确认拥有上传虚拟人物素材及本次生成用途的合法授权，并同意将人物图上传到已配置的火山 AIGC 角色库</span></label>
+          <button id="prepareRealActorsBtn" class="secondary-button" type="button">上传并绑定火山角色库</button>
+          <small id="realActorStatusHint" class="pipeline-prerequisite" role="status">请先完成分镜分析并勾选虚拟人物素材授权确认。</small>
+        </div>
+        <section class="ark-character-library" aria-labelledby="arkCharacterLibraryTitle">
+          <div class="scene-library-heading"><div><b id="arkCharacterLibraryTitle">火山引擎 AIGC 虚拟人像库</b><small>通过 Assets API 创建和管理 AIGC 角色组，并以 asset://Asset_ID 锁定虚拟人物身份</small></div><div><span id="arkCharacterLibraryState">正在读取人物库…</span><button id="refreshCharacterLibraryBtn" class="ghost-button small" type="button">刷新人物库</button><a class="ghost-button small" href="https://console.volcengine.com/ark" target="_blank" rel="noopener">打开火山控制台</a></div></div>
+          <div class="ark-character-group-manager">
+            <div class="field"><label for="arkNewGroupName">新 AIGC 虚拟人像组名称</label><input id="arkNewGroupName" type="text" maxlength="64" placeholder="例如：真实人物复刻·虚拟女主角"></div>
+            <div class="field"><label for="arkNewGroupDescription">角色组说明 <em>可选</em></label><input id="arkNewGroupDescription" type="text" maxlength="300" placeholder="例如：用于真实人物复刻重绘的虚拟角色"></div>
+            <div class="ark-character-group-actions"><button id="createRealCharacterGroupBtn" class="secondary-button" type="button">创建人像组</button><button id="renameCharacterGroupBtn" class="ghost-button" type="button">重命名选中组</button><button id="deleteCharacterGroupBtn" class="danger-button" type="button">删除选中组</button></div>
+          </div>
+          <div class="ark-character-upload-row"><div class="field"><label for="arkCharacterGroup">上传到角色组</label><div class="character-group-picker"><select id="arkCharacterGroup"><option value="">请先读取角色组</option></select><button id="quickCreateCharacterGroupBtn" class="ghost-button" type="button">＋ 创建人像组</button></div></div><div class="field"><label for="arkCharacterName">素材名称</label><input id="arkCharacterName" type="text" maxlength="64" placeholder="例如：女主角·便利店制服"></div><label class="mini-drop" for="arkCharacterFile"><input id="arkCharacterFile" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"><span>选择人物图片</span><small id="arkCharacterFileName">JPG / PNG / WEBP，最大30MB</small></label><button id="uploadCharacterAssetBtn" class="secondary-button" type="button">上传到火山人物库</button></div>
+          <div class="ark-character-assets-heading"><div><b>素材预览</b><small>点击人物缩略图可查看大图；素材较多时在下方区域内滚动。</small></div><span>仅 Active 素材可用于成片</span></div>
+          <div id="arkCharacterAssetList" class="ark-character-asset-list"></div>
+          <small id="arkCharacterLibraryHint" class="pipeline-prerequisite">AIGC 虚拟人像组不需要真人活体认证；人物上传/删除需要素材库 AK/SK，上传还需要可访问的临时图片地址。</small>
+        </section>
+          <div class="notice"><b>人物身份只走 AIGC 虚拟人像库</b><span>上传的人物图仅用于创建火山 AIGC 角色素材。状态变为 Active 后，最终成片只提交角色库 Asset 和对应服装图；不会生成、提交或依赖眼部遮挡图与素描图，平台仍会正常执行安全审核。</span></div>
+        <div class="long-scene-library">
+          <div class="scene-library-heading"><div><b>多场景素材库</b><small>一个场景组代表同一地点，可上传1–6张不同角度；所有分镜都必须匹配新场景。</small></div><div><span id="sceneGroupCount">1 个场景组 · 0 张图</span><button id="addSceneGroupBtn" class="secondary-button" type="button">＋ 添加场景组</button><button id="autoMatchScenesBtn" class="ghost-button small" type="button">自动匹配全部分镜</button></div></div>
+          <div id="sceneGroupList" class="scene-group-list"></div>
+        </div>
+      </section>
+
+      <section id="generate" class="panel generation-panel">
+        <div class="panel-heading"><span class="step-number">05</span><div><h2>选择最终成片生成方式</h2><p>保留逐镜生成，也可用整段白模一次生成来优先保证同一场景的空间连续性</p></div></div>
+        <div class="generation-strategy-picker" role="radiogroup" aria-label="最终成片生成模式">
+          <label class="generation-strategy-card active"><input id="generationStrategyPerShot" name="generationStrategy" type="radio" value="per_shot" checked><span><b>模式一 · 逐分镜生成并合并</b><small>沿用现有流程：每镜独立匹配场景机位、生成成片、质检纠偏后合并。适合精确逐镜控制和单镜重生。</small></span></label>
+          <label class="generation-strategy-card"><input id="generationStrategyWhole" name="generationStrategy" type="radio" value="whole_white_model"><span><b>模式二 · 整段白模一次生成</b><small>固定使用 Seedance 2.5，把合并白模作为完整时空母版，只提交一次成片任务，优先保持同一空间连续。</small></span></label>
+        </div>
+        <div id="wholeGenerationControls" class="whole-generation-controls hidden">
+          <div class="field"><label for="wholeSceneReference">整段场景参考图</label><select id="wholeSceneReference"><option value="">请先在步骤04上传场景图片</option></select><small>直接使用你上传的原始场景图，不再调用 Seedream 生成逐镜场景板。</small></div>
+          <div class="whole-scene-prompt"><b>固定场景引用提示词</b><code>@场景图 只做场景参考，不做必要背景。</code><small>系统还会要求同一地点的建筑、陈设和方位跨镜连续，并允许背景随白模机位自然产生透视和视差。</small></div>
+        </div>
+        <div class="model-sections">
+          <div class="model-section seedream-section"><div class="model-section-title"><span>Seedream 5.0</span><b>将新场景匹配到每个分镜机位</b></div><div class="field"><label for="imageModel">图片模型</label><input id="imageModel" type="text" value="doubao-seedream-5-0-260128"></div><div class="field"><label for="blurRange">运动模糊补偿帧 <em>可选</em></label><input id="blurRange" type="text" placeholder="通常留空"></div><div class="prompt-block"><div class="prompt-label"><label for="scenePrompt">新场景机位匹配提示词</label><button id="resetScenePromptBtn" class="text-button" type="button">恢复推荐</button></div><textarea id="scenePrompt" rows="7"></textarea><small>只读取深度帧的机位与空间，不提取、不保留原场景。</small></div></div>
+          <div class="model-section seedance-section">
+            <div class="model-section-title"><span id="selectedSeedanceLabel">Seedance 2.0</span><b>按分镜人数动态复刻</b></div>
+            <div class="final-style-library"><div class="final-style-heading"><div><b>成片风格库</b><small>默认使用超写实影视风；人物身份由火山 AIGC 虚拟人像 Asset 锁定</small></div><span>逐镜一致</span></div><input id="finalStyle" type="hidden" value="ultra_realistic"><div id="finalStyleLibrary" class="style-preset-grid"></div></div>
+            <div class="long-settings-grid"><div class="field"><label for="model">视频模型</label><select id="model"><option value="doubao-seedance-2-0-260128" selected>Seedance 2.0</option><option value="doubao-seedance-2-5-260628">Seedance 2.5</option></select><small>只控制最终成片；白模仍固定Seedance 2.0 / 480p</small></div><div class="field"><label for="resolution">分辨率</label><select id="resolution"><option>480p</option><option selected>720p</option><option>1080p</option></select><small id="resolutionHint">Seedance 2.0 支持480p、720p、1080p</small></div><div class="field"><label for="ratio">画面比例</label><select id="ratio"><option selected>adaptive</option><option>16:9</option><option>4:3</option><option>1:1</option><option>3:4</option><option>9:16</option><option>21:9</option></select><small id="ratioHint">Seedance 2.0 可人工选择；adaptive 会跟随白模视频</small></div></div>
+            <div class="toggle-row"><label><input id="requireWhiteModel" type="checkbox" checked><span></span>强制使用白模母版</label><div class="voice-mode-note"><b>固定新声音</b> Seedance根据新人物生成音色，不使用原人物声音</div><div class="no-text-mode-note"><b>固定无文字</b> 禁止字幕、标题、Logo、角标和水印</div><label><input id="deleteTos" type="checkbox" checked><span></span>删除临时公开视频</label></div>
+            <div class="prompt-block"><div class="prompt-label"><label for="prompt">所有分镜共用的动作与构图约束</label><button id="resetPromptBtn" class="text-button" type="button">恢复推荐</button></div><textarea id="prompt" rows="8"></textarea><small>人物和@图片编号由系统针对每个分镜自动生成；所选成片风格、人工校订台词和表演会由系统逐镜追加。</small></div>
+          </div>
+        </div>
+        <div class="long-cost"><div><b id="costTitle">请先免费分析分镜</b><small id="costNote">分析并确认分镜角色后显示实际调用数量</small></div><div class="long-generate-actions"><button id="pauseGenerateBtn" class="secondary-button hidden" type="button" disabled>暂停生成</button><button id="regenerateAllBtn" class="secondary-button" type="button" disabled>重新生成全部分镜</button><button id="generateBtn" class="primary-button" type="button" disabled>按角色配置生成并合并</button></div></div>
+      </section>
+    </form>
+
+    <section class="panel task-panel">
+      <div class="panel-heading compact-heading"><span class="step-number neutral">●</span><div><h2>分镜人物映射、场景、进度与预览</h2><p>本地人体检测会标出 P1/P2；付费生成前请确认每个原片人物对应的新人物</p></div></div>
+      <div id="emptyTask" class="empty-task"><span>◎</span><b>还没有分镜分析</b><small>上传长视频并点击“免费分析分镜”。</small></div>
+      <div id="activeTask" class="active-task hidden">
+        <div class="task-summary"><div><span id="jobKind" class="job-kind">长视频多分镜</span><h3 id="jobStage">正在分析</h3><small id="jobMeta"></small></div><strong id="progressPercent">0%</strong></div>
+        <div class="progress-track"><span id="progressBar"></span></div><pre id="jobLogs" class="job-logs"></pre>
+        <div id="shotGrid" class="shot-grid"></div>
+        <label id="castConfirmBar" class="cast-confirm-bar hidden"><input id="confirmCast" type="checkbox"><span><b>我已核对全部分镜的人物与新场景映射</b><small>每个分镜都必须选择场景组和具体角度；无人镜头也会重绘，不再保留原画面。</small></span></label>
+        <article id="finalResultArea" class="preview-card long-final hidden"><div class="preview-heading"><div><span>FINAL</span><b>多分镜合并成片</b></div><small>已按原始顺序与时长合并</small></div><video id="finalResultVideo" controls playsinline preload="metadata"></video><div class="result-actions"><a id="finalDownloadLink" class="primary-button" href="#">下载长视频最终成片</a></div></article>
+        <section id="downloadCenter" class="result-download-center hidden" aria-label="结果下载中心">
+          <div class="download-center-heading"><div><span>DOWNLOAD CENTER</span><h3>结果下载中心</h3><p>完整母版、完整成片与逐分镜文件集中下载。</p></div><div id="downloadBundleLinks" class="download-bundle-links"></div></div>
+          <div class="download-list-grid">
+            <article><div class="download-list-title"><b>白模视频</b><small>逐镜白模绿幕动作母版</small></div><div id="whiteShotDownloadList" class="download-shot-list"></div></article>
+            <article><div class="download-list-title"><b>裁剪前成品片段</b><small>Seedance 返回、尚未按原分镜时长裁剪的片段</small></div><div id="finalShotDownloadList" class="download-shot-list"></div></article>
+          </div>
+        </section>
+        <div class="preview-folder-action"><button id="openFolderBtn" class="ghost-button" type="button">打开本地结果目录</button></div>
+      </div>
+    </section>
+
+    <section id="archives" class="panel archive-panel">
+      <div class="panel-heading"><span class="step-number">07</span><div><h2>缓存、记忆与项目存档</h2><p>页面参数会自动保存在当前浏览器；命名存档可保存完整任务状态并在之后恢复</p></div></div>
+      <div class="archive-grid">
+        <article class="archive-card"><span class="stage-chip local">AUTO CACHE</span><h3>自动缓存</h3><p>模型、分辨率、画幅、提示词、生成模式和当前步骤会在本机自动记忆。视频与图片文件由项目任务目录持久保存，不会塞入浏览器缓存。</p><div id="draftCacheState" class="archive-state">正在读取缓存…</div><button id="clearDraftCacheBtn" class="ghost-button" type="button">清除页面参数缓存</button></article>
+        <article class="archive-card archive-manager"><span class="stage-chip cloud">PROJECT ARCHIVE</span><h3>命名存档</h3><div class="archive-create-row"><input id="archiveName" type="text" maxlength="80" placeholder="例如：便利店测试·白模确认版"><button id="saveArchiveBtn" class="secondary-button" type="button">保存当前版本</button></div><div class="field"><label for="archiveList">已有存档</label><select id="archiveList"><option value="">正在读取存档…</option></select></div><div class="archive-actions"><button id="restoreArchiveBtn" class="primary-button" type="button" disabled>恢复所选存档</button><button id="deleteArchiveBtn" class="danger-button" type="button" disabled>删除存档</button></div><small>恢复存档会切回当时的人物、场景、白模、分镜状态和已有结果；运行中的付费任务不能创建或恢复存档。</small></article>
+      </div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/project_registry.js?v=20260823-2" defer></script>
+  <script src="/static/workflow_common.js?v=20260824-3" defer></script>
+  <script src="/static/upload_preview.js?v=20260808-1" defer></script>
+  <dialog id="quickCharacterGroupDialog" class="character-group-dialog" aria-labelledby="quickCharacterGroupTitle">
+    <form id="quickCharacterGroupForm" method="dialog">
+      <div class="character-group-dialog-heading"><div><b id="quickCharacterGroupTitle">创建人像组</b><small>创建成功后会自动选中，可直接上传当前人物。</small></div><button id="closeCharacterGroupDialogBtn" class="ghost-button small" type="button" aria-label="关闭">关闭</button></div>
+      <div class="field"><label for="quickCharacterGroupName">人像组名称</label><input id="quickCharacterGroupName" type="text" maxlength="64" autocomplete="off" placeholder="例如：便利店女主角"></div>
+      <div class="field"><label for="quickCharacterGroupDescription">人像组说明 <em>可选</em></label><input id="quickCharacterGroupDescription" type="text" maxlength="300" autocomplete="off" placeholder="例如：真实人物复刻项目专用角色"></div>
+      <div class="character-group-dialog-actions"><button id="cancelCharacterGroupDialogBtn" class="ghost-button" type="button">取消</button><button id="confirmCreateCharacterGroupBtn" class="secondary-button" type="button">创建并选中</button></div>
+    </form>
+  </dialog>
+  <script src="/static/real_long_video.js?v=20260823-02&amp;layout=7&amp;workspaces=1" defer></script>
+</body>
+</html>

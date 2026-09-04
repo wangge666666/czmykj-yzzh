@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>只更换人物 · DepthFlow</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260808-5">
+  <link rel="stylesheet" href="/static/person.css?v=20260807-3">
+  <link rel="stylesheet" href="/static/workflow_shell.css?v=20260824-4">
+</head>
+<body>
+  <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="返回项目中心"><span class="brand-mark">人</span><span><strong>只更换人物</strong><small>DepthFlow Project 03 · Seedream + Seedance</small></span></a>
+    <div class="system-state"><span id="arkBadge" class="badge waiting"><i></i>API 检查中</span><span id="channelBadge" class="badge waiting"><i></i>临时通道检查中</span></div>
+  </header>
+
+  <main id="top">
+    <section class="hero person-hero">
+      <div class="eyebrow">CHARACTER-ONLY REPLACEMENT</div>
+      <h1>人物焕新，<br><span>原片场景完整保留。</span></h1>
+      <p>Seedream 5.0 自动清除原人物并恢复被遮挡的环境，Seedance 2.0 再将新人物和服装放回同一场景、动作与镜头中。</p>
+      <div class="hero-pills"><span>原场景自动提取</span><span>场景参考可预览</span><span>人物与服装替换</span><span>动作运镜复刻</span></div>
+    </section>
+
+    <nav class="stepper" aria-label="只更换人物工作流程">
+      <a href="#source"><b>01</b><span>原视频</span></a><i></i><a href="#prepare"><b>02</b><span>深度与场景</span></a><i></i><a href="#replacement"><b>03</b><span>新人物</span></a><i></i><a href="#generate"><b>04</b><span>成片</span></a>
+    </nav>
+
+    <form id="personWorkflowForm" novalidate>
+      <section class="workspace-grid">
+        <article id="source" class="panel upload-panel">
+          <div class="panel-heading"><span class="step-number">01</span><div><h2>提交需要替换人物的原视频</h2><p>原场景、动作、表演节奏和镜头的唯一依据</p></div></div>
+          <label class="dropzone" id="videoDropzone" for="referenceVideo">
+            <input id="referenceVideo" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"><span class="upload-icon">＋</span><strong>点击选择或拖入原视频</strong><small>将自动生成深度视频，并提取三张参考帧重建空场景</small><span id="videoFileName" class="file-name">尚未选择文件</span>
+          </label>
+          <div class="field compact-field"><label for="blurRange">运动模糊补偿帧 <em>可选</em></label><input id="blurRange" type="text" placeholder="例如 291:305；通常留空"></div>
+        </article>
+
+        <article id="prepare" class="panel prepare-panel">
+          <div class="panel-heading"><span class="step-number">02</span><div><h2>准备原片约束素材</h2><p>深度保留动作，干净场景保留原环境</p></div></div>
+          <div class="prepare-visual" aria-hidden="true">
+            <div class="prepare-side depth-side"><span>DEPTH</span><i class="person-silhouette"></i></div>
+            <div class="prepare-arrow">→</div>
+            <div class="prepare-side scene-side"><span>SCENE</span><i></i><b></b></div>
+          </div>
+          <button id="prepareBtn" class="secondary-button prepare-button" type="button">生成深度视频 + Seedream 提取原场景</button>
+          <span id="prepareState" class="inline-state">尚未准备原片场景</span>
+        </article>
+      </section>
+
+      <section id="replacement" class="panel replacement-panel">
+        <div class="panel-heading"><span class="step-number">03</span><div><h2>提供新的主角与服装</h2><p>最终只替换这两项，原片场景由 Seedream 自动恢复并保留</p></div></div>
+        <div class="replacement-grid">
+          <article class="replacement-card">
+            <div class="asset-label"><span>@图片 1</span><b>新人物形象</b></div>
+            <label class="mini-drop large-drop" for="personImage"><input id="personImage" type="file" accept="image/*,.heic,.heif"><span>选择人物图片</span><small id="personFileName">虚构 / AI 角色建议正面全身</small></label>
+            <div class="asset-or">或使用已授权真人素材</div>
+            <div class="field"><input id="personAsset" type="text" placeholder="asset://asset-..."><small>真人形象需要在火山方舟完成人像授权</small></div>
+          </article>
+          <article class="replacement-card">
+            <div class="asset-label"><span>@图片 2</span><b>新服装参考</b></div>
+            <label class="mini-drop large-drop" for="clothingImage"><input id="clothingImage" type="file" accept="image/*,.heic,.heif"><span>选择服装图片</span><small id="clothingFileName">建议正面展示完整款式，不含清晰真人脸</small></label>
+          </article>
+          <article class="replacement-card auto-scene-card">
+            <div class="asset-label"><span>@图片 3</span><b>自动提取的原场景</b></div>
+            <div class="scene-placeholder"><i></i><b>由 Seedream 5.0 自动生成</b><small>生成后将在下方任务区预览和下载</small></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="generate" class="panel generation-panel">
+        <div class="panel-heading"><span class="step-number">04</span><div><h2>图片提取与视频生成设置</h2><p>Seedream 负责保留环境，Seedance 负责更换人物并复刻动作</p></div></div>
+        <div class="model-sections">
+          <div class="model-section seedream-section">
+            <div class="model-section-title"><span>Seedream 5.0</span><b>原场景提取</b></div>
+            <div class="field"><label for="imageModel">图片模型</label><input id="imageModel" type="text" value="doubao-seedream-5-0-260128"></div>
+            <div class="prompt-block"><div class="prompt-label"><label for="scenePrompt">场景重建提示词</label><button id="resetScenePromptBtn" class="text-button" type="button">恢复推荐</button></div><textarea id="scenePrompt" rows="7"></textarea><small>以中间帧构图为准，前后帧只用于恢复被原人物遮挡的环境。</small></div>
+          </div>
+          <div class="model-section seedance-section">
+            <div class="model-section-title"><span>Seedance 2.0</span><b>最终成片</b></div>
+            <div class="person-settings-grid">
+              <div class="field model-field"><label for="model">视频模型</label><input id="model" type="text" value="doubao-seedance-2-0-260128"></div>
+              <div class="field"><label for="resolution">分辨率</label><select id="resolution"><option>480p</option><option selected>720p</option><option>1080p</option><option>4k</option></select></div>
+              <div class="field"><label for="ratio">画面比例</label><select id="ratio"><option selected>adaptive</option><option>16:9</option><option>4:3</option><option>1:1</option><option>3:4</option><option>9:16</option><option>21:9</option></select></div>
+              <div class="field"><label for="duration">自动匹配时长</label><input id="duration" type="number" min="4" max="15" value="15" readonly><small id="durationHint">选择原视频后自动匹配</small></div>
+            </div>
+            <div class="toggle-row"><label><input id="generateAudio" type="checkbox"><span></span>生成声音</label><label><input id="watermark" type="checkbox"><span></span>添加 AI 水印</label><label><input id="deleteTos" type="checkbox" checked><span></span>生成后删除临时公开视频</label></div>
+            <div class="prompt-block"><div class="prompt-label"><label for="prompt">只更换人物提示词</label><button id="resetPromptBtn" class="text-button" type="button">恢复推荐</button></div><textarea id="prompt" rows="8"></textarea></div>
+          </div>
+        </div>
+        <details class="advanced"><summary>可选：使用你自己的深度视频公网 URL</summary><div class="field"><label for="depthReference">公网 URL / asset:// ID</label><input id="depthReference" type="url" placeholder="通常留空，系统会自动创建临时地址"></div></details>
+        <div class="submit-row person-submit-row">
+          <div class="submit-copy"><b>项目 03 · 只更换人物</b><small>先检查场景提取结果，再生成；也可以直接一键完成全部流程</small></div>
+          <div class="submit-buttons"><button id="generateBtn" class="secondary-button" type="button">已有深度和场景：生成成片</button><button id="fullBtn" class="primary-button" type="button">一键提取场景并生成成片</button></div>
+        </div>
+      </section>
+    </form>
+
+    <section class="panel task-panel">
+      <div class="panel-heading compact-heading"><span class="step-number neutral">●</span><div><h2>场景提取与成片预览</h2><p>三个中间结果分别保留，可单独预览并选择下载位置</p></div></div>
+      <div class="recover-row"><input id="recoverTaskId" type="text" placeholder="输入 Seedance 任务 ID，例如 cgt-..."><button id="recoverBtn" class="ghost-button" type="button">恢复查询</button></div>
+      <div id="emptyTask" class="empty-task"><span>◎</span><b>还没有只更换人物任务</b><small>开始后，这里会显示深度视频、原场景参考与最终成片。</small></div>
+      <div id="activeTask" class="active-task hidden">
+        <div class="task-summary"><div><span id="jobKind" class="job-kind">只更换人物</span><h3 id="jobStage">正在准备</h3><small id="cloudTaskId"></small></div><strong id="progressPercent">0%</strong></div>
+        <div class="progress-track"><span id="progressBar"></span></div><pre id="jobLogs" class="job-logs"></pre>
+        <div id="sceneRetryArea" class="scene-retry-area hidden">
+          <div><b>Seedream 返回连接被远端重置</b><small>已有深度视频和参考帧会直接复用；重试只调用 Seedream，不会重新跑深度，也不会自动提交 Seedance。</small></div>
+          <button id="retrySceneBtn" class="secondary-button" type="button">安全重试场景提取（复用深度）</button>
+        </div>
+        <div id="seedanceRecoverArea" class="scene-retry-area seedance-recover-area hidden">
+          <div><b>Seedance 创建响应超时，但云端任务可能已经成功</b><small>系统会按模型、分辨率、画面比例、时长和声音设置，从任务列表中唯一匹配原任务；只读查询，不会再次提交或重复计费。</small></div>
+          <button id="recoverSeedanceBtn" class="secondary-button" type="button">安全找回已创建的 Seedance 任务</button>
+        </div>
+        <div id="resultArea" class="person-preview-grid hidden">
+          <article id="depthResultArea" class="preview-card hidden"><div class="preview-heading"><div><span>@视频 1</span><b>深度视频</b></div><small>动作与镜头约束</small></div><video id="depthResultVideo" controls playsinline preload="metadata"></video><div class="result-actions"><a id="depthDownloadLink" class="secondary-button" href="#">下载深度视频</a></div></article>
+          <article id="sceneResultArea" class="preview-card hidden"><div class="preview-heading"><div><span>@图片 3</span><b>原片干净场景</b></div><small>Seedream 5.0 自动重建</small></div><img id="sceneResultImage" alt="Seedream 提取的原片干净场景"><div class="result-actions"><a id="sceneDownloadLink" class="secondary-button" href="#">下载场景参考图</a></div></article>
+          <article id="finalResultArea" class="preview-card final-preview-card hidden"><div class="preview-heading"><div><span>Seedance 2.0</span><b>人物替换成片</b></div><small id="seedancePreviewCaption">云端状态持续同步</small></div><div id="seedanceLivePreview" class="seedance-live hidden" aria-live="polite"><div class="seedance-pulse"><i></i><i></i><i></i></div><strong id="seedanceProgressPercent">0%</strong><b id="seedanceCloudStatus">正在准备成片任务</b><div class="seedance-progress-track"><span id="seedanceProgressBar"></span></div><small id="seedanceProgressNote">等待云端任务 ID</small></div><video id="finalResultVideo" class="hidden" controls playsinline preload="metadata"></video><div id="finalResultActions" class="result-actions hidden"><a id="finalDownloadLink" class="primary-button" href="#">下载最终成片</a></div></article>
+          <div class="preview-folder-action"><button id="openFolderBtn" class="ghost-button" type="button">打开本地结果目录</button></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/project_registry.js?v=20260823-2" defer></script>
+  <script src="/static/workflow_common.js?v=20260823-2" defer></script>
+  <script src="/static/upload_preview.js?v=20260808-1" defer></script>
+  <script src="/static/person.js?v=20260824-1" defer></script>
+  <script src="/static/character_library.js?v=20260824-1" defer></script>
+</body>
+</html>
