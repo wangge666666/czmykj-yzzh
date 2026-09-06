@@ -77,21 +77,7 @@ ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ARK_VIDEO_MODEL=doubao-seedance-2-0-260128
 ARK_IMAGE_MODEL=doubao-seedream-5-0-260128
 ARK_PERFORMANCE_MODEL=doubao-seed-2-0-lite-260215
-
-# 正式部署启用 CZMIYOU 登录、产品 4 时间卡和中央计费
-MIYO_AUTH_ENABLED=true
-MIYO_LOGIN_URL=https://你的-czmiyou-登录中心
-AUTH_TOKEN_SECRET=与登录中心完全相同且至少32位
-MIYO_MYSQL_HOST=
-MIYO_MYSQL_PORT=3306
-MIYO_MYSQL_USER=
-MIYO_MYSQL_PASSWORD=
-MIYO_MYSQL_DATABASE=
 ```
-
-正式账号模式固定校验中央产品 ID `4`、产品代码 `miyo_fashion` 和完整时间卡窗口；只接受当前登录中心签发的 HMAC token。登录跳转携带的 `?token=` 通过服务端验证后会立即换成 HttpOnly Cookie，并从地址栏移除。
-
-每个付费调用提交前会检查时间卡、余额和中央启用价格；供应商成功后按任务 ID/本地调用 ID 幂等写入产品 4 的 `token_usage` 并扣减余额。若成功响应缺少可核验用量或数据库写入失败，生成结果仍保留，但会明确标为待对账且不会自动再次提交。
 
 本地参考视频会临时上传为 Seedance 可访问的公网 MP4，任务结束后立即删除；免费临时通道不可用时可配置 TOS 作为备用。
 

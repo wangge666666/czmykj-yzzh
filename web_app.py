@@ -18,12 +18,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlencode
 
 import cv2
 import numpy as np
 
-from flask import Flask, Response, g, has_request_context, jsonify, redirect, request, send_file, send_from_directory
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from waitress import serve
 from werkzeug.datastructures import FileStorage
 
@@ -86,13 +85,6 @@ from workflow_core import (
 )
 
 from face_mosaic import YuNetFaceDetector, ensure_face_model
-from miyo_integration import (
-    BillingQuote,
-    MiyoAccountService,
-    MiyoIntegrationError,
-    generic_pricing_candidates,
-    seedance_pricing_candidates,
-)
 
 
 WEB_DIR = PROJECT_DIR / "web"
@@ -597,36 +589,11 @@ class WebJob:
     depth_duration: float = 0.0
     generation_duration: int = 0
     generation_strategy: str = REAL_PER_SHOT_GENERATION_STRATEGY
-    user_id: int = 0
-    billing_status: str = ""
-    billing_error: str = ""
-    billing_cost: float = 0.0
-    billing_usage_id: int = 0
     pause_requested: bool = False
     created_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def __post_init__(self) -> None:
-        if self.user_id > 0:
-            return
-        owner_path = self.run_dir / ".miyo_owner.json"
-        if not owner_path.is_file():
-            return
-        try:
-            payload = json.loads(owner_path.read_text(encoding="utf-8"))
-            self.user_id = max(0, int(payload.get("user_id") or 0)) if isinstance(payload, dict) else 0
-        except (OSError, ValueError, TypeError):
-            self.user_id = 0
-
-    def _assert_current_owner(self) -> None:
-        service = globals().get("MIYO_SERVICE")
-        if service is None or not service.enabled or not has_request_context():
-            return
-        if self.user_id != current_miyo_user_id():
-            raise WorkflowError("找不到该任务，或当前账号无权访问。")
-
     def update(self, **values: Any) -> None:
-        self._assert_current_owner()
         with self.lock:
             for key, value in values.items():
                 setattr(self, key, value)
@@ -645,7 +612,6 @@ class WebJob:
                 self.logs = self.logs[-300:]
 
     def public(self) -> dict[str, Any]:
-        self._assert_current_owner()
         with self.lock:
             progress = self.progress
             estimated = False
@@ -683,10 +649,6 @@ class WebJob:
                 "depth_duration": round(self.depth_duration, 3) if self.depth_duration else 0,
                 "generation_duration": self.generation_duration,
                 "generation_strategy": self.generation_strategy,
-                "billing_status": self.billing_status,
-                "billing_error": self.billing_error,
-                "billing_cost": self.billing_cost,
-                "billing_usage_id": self.billing_usage_id,
                 "pause_requested": self.pause_requested,
                 "has_depth": bool(self.depth_path and self.depth_path.is_file()),
                 "has_output": bool(self.output_path and self.output_path.is_file()),
@@ -887,83 +849,12 @@ class WebJob:
 
 
 app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="/static")
-MIYO_ACCOUNT_COOKIE = "miyo_account_token"
-MIYO_SERVICE = MiyoAccountService()
-
-
-def current_miyo_user_id() -> int:
-    if not MIYO_SERVICE.enabled or not has_request_context():
-        return 0
-    account = getattr(g, "miyo_account", None)
-    return int(getattr(account, "user_id", 0) or 0)
-
-
-def _miyo_cookie_secure() -> bool:
-    value = os.environ.get("MIYO_COOKIE_SECURE", "true").strip().lower()
-    return value not in {"0", "false"}
-
-
-def _miyo_auth_error(error: MiyoIntegrationError):
-    if request.path.startswith("/api/"):
-        response = jsonify({"error": str(error), "code": error.code})
-        response.status_code = error.status_code
-    elif MIYO_SERVICE.login_url and error.status_code in {401, 403}:
-        response = redirect(MIYO_SERVICE.login_url, code=302)
-    else:
-        response = jsonify({"error": str(error), "code": error.code})
-        response.status_code = error.status_code
-    response.delete_cookie(MIYO_ACCOUNT_COOKIE, path="/")
-    return response
 
 
 @app.before_request
 def optional_site_auth():
     """Protect formal deployments while preserving the zero-config local workflow."""
-    load_env_file(override=True)
     if request.path == "/healthz":
-        return None
-    if MIYO_SERVICE.enabled:
-        token = ""
-        authorization = request.headers.get("Authorization", "").strip()
-        if authorization.lower().startswith("bearer "):
-            token = authorization[7:].strip()
-        query_token = request.args.get("token", "").strip()
-        if query_token:
-            token = query_token
-        if not token:
-            token = request.cookies.get(MIYO_ACCOUNT_COOKIE, "").strip()
-        if not token:
-            return _miyo_auth_error(
-                MiyoIntegrationError("请先登录 CZMIYOU 账号中心。", code="AUTH_REQUIRED", status_code=401)
-            )
-        try:
-            g.miyo_account = MIYO_SERVICE.verify_token(token)
-        except MiyoIntegrationError as exc:
-            return _miyo_auth_error(exc)
-        if request.path.startswith("/api/seedance/browser"):
-            return jsonify(
-                {
-                    "error": "正式账号模式只允许使用可写入中央账单的方舟 API 通道。",
-                    "code": "BILLING_CHANNEL_UNAVAILABLE",
-                }
-            ), 403
-        if query_token:
-            clean_pairs = [(key, value) for key, value in request.args.items(multi=True) if key != "token"]
-            clean_url = request.path
-            if clean_pairs:
-                clean_url = f"{clean_url}?{urlencode(clean_pairs)}"
-            response = redirect(clean_url, code=302)
-            response.set_cookie(
-                MIYO_ACCOUNT_COOKIE,
-                token,
-                httponly=True,
-                secure=_miyo_cookie_secure(),
-                samesite="Lax",
-                max_age=24 * 60 * 60,
-                path="/",
-            )
-            response.headers["Referrer-Policy"] = "no-referrer"
-            return response
         return None
     expected_user = os.environ.get("DEPTHFLOW_SITE_USER", "").strip()
     expected_password = os.environ.get("DEPTHFLOW_SITE_PASSWORD", "")
@@ -1175,20 +1066,9 @@ def apply_automatic_duration(job: WebJob, options: dict[str, Any], video_path: P
 def new_job(kind: str) -> WebJob:
     job_id = uuid.uuid4().hex[:12]
     run_dir = timestamped_run_dir(f"web_{kind}_{job_id}")
-    job = WebJob(
-        id=job_id,
-        kind=kind,
-        project=project_for_kind(kind),
-        run_dir=run_dir,
-        user_id=current_miyo_user_id(),
-    )
+    job = WebJob(id=job_id, kind=kind, project=project_for_kind(kind), run_dir=run_dir)
     with JOBS_LOCK:
         JOBS[job_id] = job
-    if job.user_id > 0:
-        save_shot_manifest(
-            job.run_dir / ".miyo_owner.json",
-            {"version": 1, "user_id": job.user_id, "created_at": job.created_at},
-        )
     return job
 
 
@@ -1247,7 +1127,6 @@ def _read_long_workspace_index_unlocked() -> dict[str, Any]:
                     "name": " ".join(str(raw.get("name") or "未命名项目").split())[:60] or "未命名项目",
                     "job_id": str(raw.get("job_id") or "")[:80],
                     "manifest_path": str(raw.get("manifest_path") or ""),
-                    "user_id": max(0, int(raw.get("user_id") or 0)),
                     "created_at": str(raw.get("created_at") or ""),
                     "updated_at": str(raw.get("updated_at") or ""),
                 }
@@ -1270,14 +1149,9 @@ def _new_long_workspace_record(name: str, *, job: WebJob | None = None) -> dict[
         "manifest_path": str(
             job.run_dir / ("real_long_manifest.json" if is_real_person_long_job(job) else "long_manifest.json")
         ) if job else "",
-        "user_id": job.user_id if job else current_miyo_user_id(),
         "created_at": now,
         "updated_at": now,
     }
-
-
-def _workspace_owned_by_current_user(record: dict[str, Any]) -> bool:
-    return not MIYO_SERVICE.enabled or int(record.get("user_id") or 0) == current_miyo_user_id()
 
 
 def ensure_long_workspace(project: str) -> list[dict[str, Any]]:
@@ -1286,10 +1160,7 @@ def ensure_long_workspace(project: str) -> list[dict[str, Any]]:
         raise WorkflowError("长视频项目类型无效。")
     with LONG_WORKSPACE_LOCK:
         payload = _read_long_workspace_index_unlocked()
-        existing = [
-            item for item in payload["projects"].get(project) or []
-            if _workspace_owned_by_current_user(item)
-        ]
+        existing = list(payload["projects"].get(project) or [])
     if existing:
         return existing
 
@@ -1301,11 +1172,10 @@ def ensure_long_workspace(project: str) -> list[dict[str, Any]]:
     )
     with LONG_WORKSPACE_LOCK:
         payload = _read_long_workspace_index_unlocked()
-        all_records = payload["projects"].setdefault(project, [])
-        existing = [item for item in all_records if _workspace_owned_by_current_user(item)]
+        existing = list(payload["projects"].get(project) or [])
         if not existing:
             record = _new_long_workspace_record(imported_name, job=latest)
-            all_records.insert(0, record)
+            payload["projects"][project] = [record]
             _write_long_workspace_index_unlocked(payload)
             existing = [record]
     if latest:
@@ -1323,11 +1193,7 @@ def create_long_workspace(project: str, name: str) -> dict[str, Any]:
     with LONG_WORKSPACE_LOCK:
         payload = _read_long_workspace_index_unlocked()
         records = payload["projects"].setdefault(project, [])
-        if any(
-            _workspace_owned_by_current_user(item)
-            and str(item.get("name") or "").casefold() == clean_name.casefold()
-            for item in records
-        ):
+        if any(str(item.get("name") or "").casefold() == clean_name.casefold() for item in records):
             raise WorkflowError("已经存在同名项目，请换一个名称。")
         record = _new_long_workspace_record(clean_name)
         records.insert(0, record)
@@ -1341,10 +1207,7 @@ def get_long_workspace_record(project: str, workspace_id: str) -> dict[str, Any]
     with LONG_WORKSPACE_LOCK:
         payload = _read_long_workspace_index_unlocked()
         record = next(
-            (
-                item for item in payload["projects"].get(project) or []
-                if item.get("id") == workspace_id and _workspace_owned_by_current_user(item)
-            ),
+            (item for item in payload["projects"].get(project) or [] if item.get("id") == workspace_id),
             None,
         )
         return dict(record) if record else None
@@ -1359,15 +1222,11 @@ def update_long_workspace(project: str, workspace_id: str, *, name: str) -> dict
         records = payload["projects"].get(project) or []
         if any(
             item.get("id") != workspace_id
-            and _workspace_owned_by_current_user(item)
             and str(item.get("name") or "").casefold() == clean_name.casefold()
             for item in records
         ):
             raise WorkflowError("已经存在同名项目，请换一个名称。")
-        record = next(
-            (item for item in records if item.get("id") == workspace_id and _workspace_owned_by_current_user(item)),
-            None,
-        )
+        record = next((item for item in records if item.get("id") == workspace_id), None)
         if record is None:
             raise WorkflowError("找不到该重绘项目。")
         record["name"] = clean_name
@@ -1385,10 +1244,7 @@ def delete_long_workspace(project: str, workspace_id: str) -> list[dict[str, Any
     with LONG_WORKSPACE_LOCK:
         payload = _read_long_workspace_index_unlocked()
         records = payload["projects"].get(project) or []
-        record = next(
-            (item for item in records if item.get("id") == workspace_id and _workspace_owned_by_current_user(item)),
-            None,
-        )
+        record = next((item for item in records if item.get("id") == workspace_id), None)
         if record is None:
             raise WorkflowError("找不到该重绘项目。")
         job_id = str(record.get("job_id") or "")
@@ -1397,11 +1253,11 @@ def delete_long_workspace(project: str, workspace_id: str) -> list[dict[str, Any
         if job and job.status in {"queued", "running"}:
             raise WorkflowError("该项目仍在运行，不能删除；可以先切换到其他项目继续操作。")
         records = [item for item in records if item.get("id") != workspace_id]
-        if not any(_workspace_owned_by_current_user(item) for item in records):
-            records.insert(0, _new_long_workspace_record("重绘项目 1"))
+        if not records:
+            records = [_new_long_workspace_record("重绘项目 1")]
         payload["projects"][project] = records
         _write_long_workspace_index_unlocked(payload)
-        return [item for item in records if _workspace_owned_by_current_user(item)]
+        return records
 
 
 def bind_long_workspace(job: WebJob, workspace_id: str) -> None:
@@ -1413,14 +1269,7 @@ def bind_long_workspace(job: WebJob, workspace_id: str) -> None:
     with LONG_WORKSPACE_LOCK:
         payload = _read_long_workspace_index_unlocked()
         records = payload["projects"].get(job.project) or []
-        record = next(
-            (
-                item for item in records
-                if item.get("id") == workspace_id
-                and int(item.get("user_id") or 0) == job.user_id
-            ),
-            None,
-        )
+        record = next((item for item in records if item.get("id") == workspace_id), None)
         if record is None:
             raise WorkflowError("当前重绘项目不存在，请刷新项目列表后重试。")
         record["job_id"] = job.id
@@ -1439,14 +1288,7 @@ def touch_long_workspace(job: WebJob) -> None:
     with LONG_WORKSPACE_LOCK:
         payload = _read_long_workspace_index_unlocked()
         records = payload["projects"].get(job.project) or []
-        record = next(
-            (
-                item for item in records
-                if item.get("id") == job.workspace_id
-                and (not MIYO_SERVICE.enabled or int(item.get("user_id") or 0) == job.user_id)
-            ),
-            None,
-        )
+        record = next((item for item in records if item.get("id") == job.workspace_id), None)
         if record is None:
             return
         record["job_id"] = job.id
@@ -1570,11 +1412,6 @@ def persist_cloud_job(job: WebJob, *, status: str, **values: Any) -> Path:
             "cloud_status": job.cloud_status,
             "submitted_at": job.cloud_started_at,
             "created_at": job.created_at,
-            "user_id": job.user_id,
-            "billing_status": job.billing_status,
-            "billing_error": job.billing_error,
-            "billing_cost": job.billing_cost,
-            "billing_usage_id": job.billing_usage_id,
             "depth": str(job.depth_path) if job.depth_path else "",
             "scene": str(job.scene_path) if job.scene_path else "",
             "person": str(job.person_path) if job.person_path else "",
@@ -1658,19 +1495,6 @@ def resume_cloud_job(job: WebJob) -> None:
             persist_cloud_job(job, status="running")
 
         task = client.wait_for_task(job.task_id, on_status=on_status)
-        cloud_record: dict[str, Any] = {}
-        try:
-            loaded_record = json.loads((job.run_dir / "job.json").read_text(encoding="utf-8"))
-            cloud_record = loaded_record if isinstance(loaded_record, dict) else {}
-        except (OSError, ValueError, TypeError):
-            cloud_record = {}
-        settle_video_billing(
-            job,
-            task,
-            model=str(cloud_record.get("model") or os.getenv("ARK_VIDEO_MODEL", DEFAULT_SEEDANCE_MODEL)),
-            resolution=str(cloud_record.get("resolution") or "720p"),
-            description=f"衣装智换 · {job.project or job.kind} · Seedance 恢复任务",
-        )
         try:
             returned_duration = int(float(task.get("duration") or 0))
         except (TypeError, ValueError):
@@ -1714,8 +1538,6 @@ def restore_cloud_job(job_id: str, *, resume: bool = True) -> WebJob | None:
     with JOBS_LOCK:
         existing = JOBS.get(job_id)
     if existing:
-        if MIYO_SERVICE.enabled and existing.user_id != current_miyo_user_id():
-            return None
         return existing
     if not re.fullmatch(r"[A-Za-z0-9-]{4,64}", job_id):
         return None
@@ -1731,9 +1553,6 @@ def restore_cloud_job(job_id: str, *, resume: bool = True) -> WebJob | None:
         try:
             record = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
-            continue
-        record_user_id = int(record.get("user_id") or 0)
-        if MIYO_SERVICE.enabled and record_user_id != current_miyo_user_id():
             continue
         task_id = str(record.get("task_id") or "").strip()
         if not task_id:
@@ -1766,11 +1585,6 @@ def restore_cloud_job(job_id: str, *, resume: bool = True) -> WebJob | None:
             cloud_status="succeeded" if output else str(record.get("cloud_status") or "queued"),
             cloud_started_at=submitted_at or time.time(),
             generation_duration=int(record.get("duration") or 0),
-            user_id=record_user_id,
-            billing_status=str(record.get("billing_status") or ""),
-            billing_error=str(record.get("billing_error") or ""),
-            billing_cost=float(record.get("billing_cost") or 0),
-            billing_usage_id=int(record.get("billing_usage_id") or 0),
             created_at=str(record.get("created_at") or datetime.now().isoformat(timespec="seconds")),
         )
         job.log("已从本地任务记录恢复，页面无需手动输入 Seedance 任务 ID。")
@@ -1814,16 +1628,6 @@ def get_job(job_id: str) -> WebJob:
         job = JOBS.get(job_id)
     if not job:
         raise WorkflowError("找不到该任务；本地服务重启后，请使用 Seedance 任务 ID 恢复查询。")
-    if MIYO_SERVICE.enabled and job.user_id != current_miyo_user_id():
-        raise WorkflowError("找不到该任务，或当前账号无权访问。")
-    return job
-
-
-def visible_job(job: WebJob | None) -> WebJob | None:
-    if job is None:
-        return None
-    if MIYO_SERVICE.enabled and job.user_id != current_miyo_user_id():
-        return None
     return job
 
 
@@ -2239,9 +2043,7 @@ def restore_latest_clothing_only_job() -> WebJob | None:
     """Restore the newest Project 5 preparation or cloud result."""
     with JOBS_LOCK:
         candidates_in_memory = [
-            job for job in JOBS.values()
-            if job.project == "clothing_only_replacement"
-            and (not MIYO_SERVICE.enabled or job.user_id == current_miyo_user_id())
+            job for job in JOBS.values() if job.project == "clothing_only_replacement"
         ]
     if candidates_in_memory:
         return max(candidates_in_memory, key=lambda item: item.created_at)
@@ -2319,7 +2121,6 @@ def restore_latest_clothing_only_job() -> WebJob | None:
 def _persist_long_job(job: WebJob) -> Path:
     payload = {
         "local_job_id": job.id,
-        "user_id": job.user_id,
         "kind": job.kind,
         "project": job.project or VIRTUAL_LONG_PROJECT,
         "workspace_id": job.workspace_id,
@@ -2328,10 +2129,6 @@ def _persist_long_job(job: WebJob) -> Path:
         "stage": job.stage,
         "progress": job.progress,
         "pause_requested": job.pause_requested,
-        "billing_status": job.billing_status,
-        "billing_error": job.billing_error,
-        "billing_cost": job.billing_cost,
-        "billing_usage_id": job.billing_usage_id,
         "created_at": job.created_at,
         "source_duration": job.source_duration,
         "generation_strategy": job.generation_strategy,
@@ -2366,7 +2163,6 @@ def restore_latest_long_video_job(
             if job.project == project
             and (not job_id or job.id == job_id)
             and job.kind not in {"long_shot", "long_white_model_shot", "real_long_shot", "real_long_white_model_shot"}
-            and (not MIYO_SERVICE.enabled or job.user_id == current_miyo_user_id())
         ]
     if in_memory:
         return max(in_memory, key=lambda item: item.created_at)
@@ -2386,8 +2182,6 @@ def restore_latest_long_video_job(
         except (OSError, ValueError, TypeError):
             continue
         if str(record.get("project") or VIRTUAL_LONG_PROJECT) != project:
-            continue
-        if MIYO_SERVICE.enabled and int(record.get("user_id") or 0) != current_miyo_user_id():
             continue
         restored_job_id = str(record.get("local_job_id") or manifest.parent.name.rsplit("_", 1)[-1])
         if job_id and restored_job_id != job_id:
@@ -2534,11 +2328,6 @@ def restore_latest_long_video_job(
             generation_strategy=str(
                 record.get("generation_strategy") or REAL_PER_SHOT_GENERATION_STRATEGY
             ),
-            user_id=int(record.get("user_id") or 0),
-            billing_status=str(record.get("billing_status") or ""),
-            billing_error=str(record.get("billing_error") or ""),
-            billing_cost=float(record.get("billing_cost") or 0),
-            billing_usage_id=int(record.get("billing_usage_id") or 0),
             created_at=str(record.get("created_at") or datetime.fromtimestamp(manifest.stat().st_mtime).isoformat(timespec="seconds")),
         )
         job.log(f"已恢复 {len(safe_shots)} 个分镜及现有结果。")
@@ -2603,9 +2392,6 @@ def list_real_long_archives(
         except (OSError, ValueError, TypeError):
             continue
         snapshot = record.get("snapshot") if isinstance(record.get("snapshot"), dict) else {}
-        archive_user_id = int(record.get("user_id") or snapshot.get("user_id") or 0)
-        if MIYO_SERVICE.enabled and archive_user_id != current_miyo_user_id():
-            continue
         archive_workspace_id = str(record.get("workspace_id") or snapshot.get("workspace_id") or "")
         archive_job_id = str(snapshot.get("local_job_id") or "")
         if workspace_id and archive_workspace_id and archive_workspace_id != workspace_id:
@@ -2634,305 +2420,6 @@ def api_client() -> ArkVideoClient:
     return ArkVideoClient(
         os.getenv("ARK_API_KEY", ""),
         base_url=os.getenv("ARK_BASE_URL", DEFAULT_ARK_BASE_URL),
-    )
-
-
-def _billing_events_path(job: WebJob) -> Path:
-    return job.run_dir / "billing_events.json"
-
-
-def _read_billing_events(job: WebJob) -> list[dict[str, Any]]:
-    path = _billing_events_path(job)
-    if not path.is_file():
-        return []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return []
-    events = payload.get("events") if isinstance(payload, dict) else None
-    return [dict(item) for item in events or [] if isinstance(item, dict)]
-
-
-def _write_billing_events(job: WebJob, events: list[dict[str, Any]]) -> Path:
-    return save_shot_manifest(
-        _billing_events_path(job),
-        {
-            "version": 1,
-            "product_id": 4,
-            "user_id": job.user_id,
-            "events": events,
-        },
-    )
-
-
-def _update_billing_event(job: WebJob, event_id: str, **values: Any) -> dict[str, Any] | None:
-    events = _read_billing_events(job)
-    match = None
-    for event in events:
-        if str(event.get("id") or "") == event_id:
-            event.update(values)
-            match = event
-            break
-    if match is not None:
-        _write_billing_events(job, events)
-    return match
-
-
-def begin_paid_attempt(
-    job: WebJob,
-    *,
-    feature: str,
-    task_type: str,
-    model: str,
-    resolution: str = "",
-    has_video_input: bool = False,
-) -> dict[str, Any] | None:
-    if not MIYO_SERVICE.enabled:
-        return None
-    if job.user_id <= 0:
-        raise MiyoIntegrationError(
-            "付费任务缺少账号归属，不能提交。",
-            code="AUTH_REQUIRED",
-            status_code=401,
-        )
-    candidates = (
-        seedance_pricing_candidates(model, resolution, has_video_input=has_video_input)
-        if task_type == "video"
-        else generic_pricing_candidates(model)
-    )
-    quote = MIYO_SERVICE.quote_paid_stage(
-        job.user_id,
-        candidates,
-        expected_billing_type="tokens" if task_type in {"video", "analysis"} else None,
-    )
-    event = {
-        "id": uuid.uuid4().hex,
-        "feature": " ".join(feature.split())[:80],
-        "task_type": task_type,
-        "model": model,
-        "resolution": resolution,
-        "has_video_input": has_video_input,
-        "quote": quote.public(),
-        "status": "authorized",
-        "provider_task_id": "",
-        "billing_task_id": "",
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    }
-    events = _read_billing_events(job)
-    events.append(event)
-    _write_billing_events(job, events)
-    job.update(billing_status="authorized", billing_error="")
-    job.log(f"中央计费预检通过：{quote.model_type} / {quote.billing_type}。")
-    return event
-
-
-def _billing_task_id(kind: str, value: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9_-]", "", value)[:40]
-    candidate = f"yzzh:{kind}:{clean}"
-    if clean and len(candidate) <= 50:
-        return candidate
-    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
-    return f"yzzh:{kind}:{digest}"
-
-
-def mark_paid_attempt_submitted(job: WebJob, event: dict[str, Any] | None, provider_task_id: str) -> None:
-    if event is None:
-        return
-    _update_billing_event(
-        job,
-        str(event["id"]),
-        status="submitted",
-        provider_task_id=provider_task_id,
-        billing_task_id=_billing_task_id("v", provider_task_id),
-    )
-
-
-def mark_paid_attempt_failed(job: WebJob, event: dict[str, Any] | None, error: Exception) -> None:
-    if event is None:
-        return
-    status = "submission_uncertain" if isinstance(error, ArkConnectionError) else "provider_failed"
-    _update_billing_event(
-        job,
-        str(event["id"]),
-        status=status,
-        error_code=type(error).__name__,
-        updated_at=datetime.now().isoformat(timespec="seconds"),
-    )
-
-
-def settle_paid_attempt(
-    job: WebJob,
-    event: dict[str, Any] | None,
-    *,
-    usage: dict[str, Any] | None,
-    description: str,
-    provider_task_id: str = "",
-) -> bool:
-    if event is None:
-        return True
-    event_id = str(event.get("id") or "")
-    task_type = str(event.get("task_type") or "unknown")
-    task_kind = "v" if task_type == "video" else "a" if task_type == "analysis" else "i"
-    billing_task_id = _billing_task_id(task_kind, provider_task_id or event_id)
-    try:
-        quote = BillingQuote.from_mapping(event.get("quote") or {})
-        result = MIYO_SERVICE.charge_once(
-            user_id=job.user_id,
-            task_id=billing_task_id,
-            task_type=task_type,
-            quote=quote,
-            usage=usage,
-            description=description,
-        )
-        previous_status = job.billing_status
-        previous_cost = float(job.billing_cost or 0)
-        job.update(
-            billing_status=(
-                "reconciliation_required"
-                if previous_status == "reconciliation_required"
-                else "duplicate" if result.duplicate else "charged"
-            ),
-            billing_error=job.billing_error if previous_status == "reconciliation_required" else "",
-            billing_cost=previous_cost + (0 if result.duplicate else float(result.cost)),
-            billing_usage_id=result.usage_id,
-        )
-        _update_billing_event(
-            job,
-            event_id,
-            status="duplicate" if result.duplicate else "charged",
-            provider_task_id=provider_task_id or str(event.get("provider_task_id") or ""),
-            billing_task_id=billing_task_id,
-            usage=usage or {},
-            result=result.public(),
-            updated_at=datetime.now().isoformat(timespec="seconds"),
-        )
-        if result.duplicate:
-            job.log(f"中央账单已存在，幂等跳过重复扣费：{billing_task_id}。")
-        else:
-            job.log(f"中央计费完成：¥{result.cost}，当前余额 ¥{result.balance}。")
-        return True
-    except MiyoIntegrationError as exc:
-        job.update(billing_status="reconciliation_required", billing_error=str(exc))
-        _update_billing_event(
-            job,
-            event_id,
-            status="reconciliation_required",
-            provider_task_id=provider_task_id or str(event.get("provider_task_id") or ""),
-            billing_task_id=billing_task_id,
-            usage=usage or {},
-            error_code=exc.code,
-            updated_at=datetime.now().isoformat(timespec="seconds"),
-        )
-        job.log(f"[计费] 供应商任务已成功，但中央记账待人工对账：{exc}")
-        return False
-
-
-def generate_paid_image(
-    job: WebJob,
-    *,
-    feature: str,
-    prompt: str,
-    image_sources: list[str],
-    model: str,
-    size: str,
-    watermark: bool = False,
-) -> dict[str, Any]:
-    event = begin_paid_attempt(
-        job,
-        feature=feature,
-        task_type="image",
-        model=model,
-    )
-    try:
-        result = api_client().generate_image(
-            prompt=prompt,
-            image_sources=image_sources,
-            model=model,
-            size=size,
-            watermark=watermark,
-        )
-    except Exception as exc:
-        mark_paid_attempt_failed(job, event, exc)
-        raise
-    settle_paid_attempt(
-        job,
-        event,
-        usage=result.get("usage") if isinstance(result, dict) else None,
-        description=f"衣装智换 · {feature}",
-    )
-    return result
-
-
-def find_video_billing_event(job: WebJob, provider_task_id: str) -> dict[str, Any] | None:
-    for event in reversed(_read_billing_events(job)):
-        if (
-            str(event.get("task_type") or "") == "video"
-            and str(event.get("provider_task_id") or "") == provider_task_id
-        ):
-            return event
-    return None
-
-
-def merge_child_billing(parent: WebJob, child: WebJob, *, label: str) -> None:
-    if not MIYO_SERVICE.enabled or not child.billing_status:
-        return
-    previous_cost = float(parent.billing_cost or 0)
-    child_cost = float(child.billing_cost or 0)
-    if child.billing_status == "reconciliation_required":
-        parent.update(
-            billing_status="reconciliation_required",
-            billing_error=child.billing_error,
-            billing_cost=previous_cost + child_cost,
-            billing_usage_id=child.billing_usage_id or parent.billing_usage_id,
-        )
-        parent.log(f"[计费] {label}已生成，但中央账单待人工对账。")
-        return
-    parent.update(
-        billing_status=(
-            parent.billing_status
-            if parent.billing_status == "reconciliation_required"
-            else child.billing_status
-        ),
-        billing_cost=previous_cost + child_cost,
-        billing_usage_id=child.billing_usage_id or parent.billing_usage_id,
-    )
-    parent.log(f"{label}中央计费已同步到项目任务。")
-
-
-def settle_video_billing(
-    job: WebJob,
-    task: dict[str, Any],
-    *,
-    model: str,
-    resolution: str,
-    description: str,
-    event: dict[str, Any] | None = None,
-) -> bool:
-    if not MIYO_SERVICE.enabled:
-        return True
-    provider_task_id = str(task.get("id") or job.task_id or "").strip()
-    event = event or find_video_billing_event(job, provider_task_id)
-    if event is None:
-        try:
-            event = begin_paid_attempt(
-                job,
-                feature="Seedance 恢复对账",
-                task_type="video",
-                model=model,
-                resolution=resolution,
-                has_video_input=True,
-            )
-            mark_paid_attempt_submitted(job, event, provider_task_id)
-        except MiyoIntegrationError as exc:
-            job.update(billing_status="reconciliation_required", billing_error=str(exc))
-            job.log(f"[计费] 已恢复供应商成功任务，但无法补建中央账单：{exc}")
-            return False
-    return settle_paid_attempt(
-        job,
-        event,
-        usage=task.get("usage") if isinstance(task, dict) else None,
-        description=description,
-        provider_task_id=provider_task_id,
     )
 
 
@@ -2979,43 +2466,6 @@ def performance_analyzer() -> ArkPerformanceAnalyzer:
         base_url=os.getenv("ARK_BASE_URL", DEFAULT_ARK_BASE_URL),
         model=os.getenv("ARK_PERFORMANCE_MODEL", "doubao-seed-2-0-lite-260215"),
     )
-
-
-def run_paid_analysis_call(
-    job: WebJob,
-    analyzer: ArkPerformanceAnalyzer,
-    *,
-    feature: str,
-    operation: Callable[[], dict[str, Any]],
-) -> dict[str, Any]:
-    event = begin_paid_attempt(
-        job,
-        feature=feature,
-        task_type="analysis",
-        model=analyzer.model,
-    )
-    try:
-        result = operation()
-    except Exception as exc:
-        if analyzer.last_usage:
-            settle_paid_attempt(
-                job,
-                event,
-                usage=analyzer.last_usage,
-                description=f"衣装智换 · {feature}",
-                provider_task_id=analyzer.last_response_id,
-            )
-        else:
-            mark_paid_attempt_failed(job, event, exc)
-        raise
-    settle_paid_attempt(
-        job,
-        event,
-        usage=analyzer.last_usage,
-        description=f"衣装智换 · {feature}",
-        provider_task_id=analyzer.last_response_id,
-    )
-    return result
 
 
 def save_upload(storage: FileStorage | None, directory: Path, stem: str) -> Path:
@@ -3097,11 +2547,10 @@ def run_scene_extraction(
     frames = extract_scene_reference_frames(source, job.run_dir, count=3)
     job.update(progress=min(start + span, start + int(span * 0.18)))
     job.log("场景参考帧已准备；Seedream 将以中间帧为主构图并结合前后帧恢复遮挡区域。")
+    client = api_client()
     job.update(stage="Seedream 5.0 正在清除人物并重建原场景", progress=start + int(span * 0.25))
     try:
-        result = generate_paid_image(
-            job,
-            feature="原片场景提取",
+        result = client.generate_image(
             prompt=prompt.strip() or DEFAULT_SCENE_EXTRACTION_PROMPT,
             image_sources=[str(path) for path in frames],
             model=model.strip() or DEFAULT_SEEDREAM_MODEL,
@@ -3230,11 +2679,10 @@ def run_long_scene_plate(
             f"这是分镜{shot_index:02d}的独立机位。禁止沿用其他分镜或图1原始视角。"
             f"{enforced_prompt}"
         )
+    client = api_client()
     job.update(stage="Seedream 5.0 正在生成本镜头新场景板", progress=start + int(span * 0.25))
     try:
-        result = generate_paid_image(
-            job,
-            feature=f"分镜 {shot_index:02d} 场景板" if shot_index > 0 else "场景板生成",
+        result = client.generate_image(
             prompt=enforced_prompt,
             image_sources=[str(target_scene), *[str(path) for path in layout_frames]],
             model=model.strip() or DEFAULT_SEEDREAM_MODEL,
@@ -6165,9 +5613,7 @@ def run_person_triview_extraction(
     )
     job.update(stage="Seedream 5.0 正在生成 16:9 原人物三视图", progress=start + int(span * 0.24))
     try:
-        result = generate_paid_image(
-            job,
-            feature="原人物三视图",
+        result = api_client().generate_image(
             prompt=enforced_prompt,
             image_sources=[str(path) for path in frames],
             model=model.strip() or DEFAULT_SEEDREAM_MODEL,
@@ -6204,6 +5650,7 @@ def run_original_subject_extraction(
     job.update(status="running", stage="正在从原视频提取人物与服装参考帧", progress=start)
     frames = extract_scene_reference_frames(source, job.run_dir, count=3)
     job.log("已从原视频前、中、后段准备三张人物与服装参考帧。")
+    client = api_client()
     person_output = job.run_dir / "original_person_triview.jpg"
     clothing_output = job.run_dir / "original_clothing_triview.jpg"
     enforced_person_prompt = f"{person_prompt.strip() or DEFAULT_PERSON_TRIVIEW_PROMPT}\n{PERSON_TRIVIEW_REQUIRED_CONSTRAINT}"
@@ -6221,9 +5668,7 @@ def run_original_subject_extraction(
             progress=start + int(span * 0.16),
         )
         try:
-            result = generate_paid_image(
-                job,
-                feature="原人物三视图",
+            result = client.generate_image(
                 prompt=enforced_person_prompt,
                 image_sources=[str(path) for path in frames],
                 model=model.strip() or DEFAULT_SEEDREAM_MODEL,
@@ -6250,9 +5695,7 @@ def run_original_subject_extraction(
             progress=start + int(span * 0.55),
         )
         try:
-            result = generate_paid_image(
-                job,
-                feature="原服装三视图",
+            result = client.generate_image(
                 prompt=enforced_clothing_prompt,
                 image_sources=[str(path) for path in frames],
                 model=model.strip() or DEFAULT_SEEDREAM_MODEL,
@@ -6301,9 +5744,7 @@ def run_clothing_reference_extraction(
         f"{CLOTHING_TRIVIEW_REQUIRED_CONSTRAINT}"
     )
     try:
-        result = generate_paid_image(
-            job,
-            feature="原服装参考提取",
+        result = api_client().generate_image(
             prompt=enforced_prompt,
             image_sources=[str(path) for path in frames],
             model=model.strip() or DEFAULT_SEEDREAM_MODEL,
@@ -6588,7 +6029,6 @@ def run_wardrobe_white_model(job: WebJob, source: Path, *, start: int = 0, span:
         project=WARDROBE_SWAP_PROJECT,
         run_dir=white_dir,
         depth_path=white_reference,
-        user_id=job.user_id,
     )
     with JOBS_LOCK:
         JOBS[white_job.id] = white_job
@@ -6605,7 +6045,6 @@ def run_wardrobe_white_model(job: WebJob, source: Path, *, start: int = 0, span:
         progress_start=5,
         video_only=True,
     )
-    merge_child_billing(job, white_job, label="白膜动作母版")
     if white_job.status != "succeeded" or not white_job.output_path or not white_job.output_path.is_file():
         raise WorkflowError(white_job.error or "白膜视频生成未完成。")
     white_output = conform_video_duration(
@@ -6770,11 +6209,8 @@ def save_multi_reference_images(
 
 
 def generation_options() -> dict[str, Any]:
-    generation_channel = request.form.get("generation_channel", "api").strip() or "api"
-    if MIYO_SERVICE.enabled and generation_channel != "api":
-        raise WorkflowError("正式账号模式只允许使用可核验用量并写入中央账单的方舟 API 通道。")
     return {
-        "generation_channel": generation_channel,
+        "generation_channel": request.form.get("generation_channel", "api").strip() or "api",
         "prompt": request.form.get("prompt", DEFAULT_PROMPT).strip() or DEFAULT_PROMPT,
         "model": request.form.get("model", DEFAULT_SEEDANCE_MODEL).strip() or DEFAULT_SEEDANCE_MODEL,
         "resolution": request.form.get("resolution", "720p"),
@@ -6899,16 +6335,7 @@ def run_generation(
     free_file_id = ""
     free_store: TempFileMediaStore | None = None
     stable_reference: SeedanceVideoReferenceSource | None = None
-    billing_attempt: dict[str, Any] | None = None
     try:
-        billing_attempt = begin_paid_attempt(
-            job,
-            feature="Seedance 视频生成",
-            task_type="video",
-            model=str(options.get("model") or DEFAULT_SEEDANCE_MODEL),
-            resolution=str(options.get("resolution") or "720p"),
-            has_video_input=True,
-        )
         client = api_client()
         job.update(stage="正在检查火山方舟 API 连接", progress=max(progress_start, 48))
         job.log("正在进行只读 API 连接预检；临时网络错误会安全重试。")
@@ -7054,7 +6481,6 @@ def run_generation(
             if task_id:
                 job.log(f"已从方舟任务列表找回创建成功的任务：{task_id}")
             else:
-                mark_paid_attempt_failed(job, billing_attempt, exc)
                 job.update(recovery_action="recover_seedance_submission")
                 persist_cloud_job(
                     job,
@@ -7076,11 +6502,7 @@ def run_generation(
                     "为避免重复计费，系统没有自动再次提交；请先在下方用方舟任务 ID 恢复查询，"
                     f"或确认任务列表后再重试。原始错误：{exc}"
                 ) from exc
-        except Exception as exc:
-            mark_paid_attempt_failed(job, billing_attempt, exc)
-            raise
         submitted_at = time.time()
-        mark_paid_attempt_submitted(job, billing_attempt, task_id)
         job.update(
             task_id=task_id,
             progress=max(progress_start, 63),
@@ -7120,14 +6542,6 @@ def run_generation(
             task_id,
             on_status=on_status,
         )
-        settle_video_billing(
-            job,
-            task,
-            model=str(options.get("model") or DEFAULT_SEEDANCE_MODEL),
-            resolution=str(options.get("resolution") or "720p"),
-            description=f"衣装智换 · {job.project or job.kind} · Seedance 视频生成",
-            event=billing_attempt,
-        )
         video_url = str((task.get("content") or {}).get("video_url") or "")
         if not video_url:
             raise WorkflowError("任务成功，但响应中没有成片 URL。")
@@ -7163,11 +6577,6 @@ def run_generation(
                 "clothing": str(job.clothing_path) if job.clothing_path else "",
                 "submitted_at": job.cloud_started_at,
                 "created_at": job.created_at,
-                "user_id": job.user_id,
-                "billing_status": job.billing_status,
-                "billing_error": job.billing_error,
-                "billing_cost": job.billing_cost,
-                "billing_usage_id": job.billing_usage_id,
                 "model": options["model"],
                 "resolution": options["resolution"],
                 "ratio": options["ratio"],
@@ -7243,16 +6652,7 @@ def run_multi_generation(
     store: TosMediaStore | None = None
     free_file_id = ""
     free_store: TempFileMediaStore | None = None
-    billing_attempt: dict[str, Any] | None = None
     try:
-        billing_attempt = begin_paid_attempt(
-            job,
-            feature="Seedance 多人视频生成",
-            task_type="video",
-            model=str(options.get("model") or DEFAULT_SEEDANCE_MODEL),
-            resolution=str(options.get("resolution") or "720p"),
-            has_video_input=True,
-        )
         client = api_client()
         job.update(status="running", stage="正在检查火山方舟 API 连接", progress=max(progress_start, 48))
         job.log("正在进行只读 API 连接预检；创建付费任务只会提交一次。")
@@ -7366,7 +6766,6 @@ def run_multi_generation(
             if task_id:
                 job.log(f"已从方舟任务列表找回创建成功的任务：{task_id}")
             else:
-                mark_paid_attempt_failed(job, billing_attempt, exc)
                 job.update(recovery_action="recover_seedance_submission")
                 persist_cloud_job(
                     job,
@@ -7388,12 +6787,8 @@ def run_multi_generation(
                     "提交响应中断且无法确认任务是否创建。为避免重复计费，系统没有自动再次提交；"
                     f"原始错误：{exc}"
                 ) from exc
-        except Exception as exc:
-            mark_paid_attempt_failed(job, billing_attempt, exc)
-            raise
 
         submitted_at = time.time()
-        mark_paid_attempt_submitted(job, billing_attempt, task_id)
         job.update(
             task_id=task_id,
             progress=max(progress_start, 63),
@@ -7434,14 +6829,6 @@ def run_multi_generation(
             task_id,
             on_status=on_status,
         )
-        settle_video_billing(
-            job,
-            task,
-            model=str(options.get("model") or DEFAULT_SEEDANCE_MODEL),
-            resolution=str(options.get("resolution") or "720p"),
-            description=f"衣装智换 · {job.project or job.kind} · Seedance 多人视频生成",
-            event=billing_attempt,
-        )
         video_url = str((task.get("content") or {}).get("video_url") or "")
         if not video_url:
             raise WorkflowError("任务成功，但响应中没有最终成片 URL。")
@@ -7476,11 +6863,6 @@ def run_multi_generation(
                 "scene": str(job.scene_path) if job.scene_path else "",
                 "submitted_at": job.cloud_started_at,
                 "created_at": job.created_at,
-                "user_id": job.user_id,
-                "billing_status": job.billing_status,
-                "billing_error": job.billing_error,
-                "billing_cost": job.billing_cost,
-                "billing_usage_id": job.billing_usage_id,
                 "model": options["model"],
                 "resolution": options["resolution"],
                 "ratio": options["ratio"],
@@ -7528,21 +6910,6 @@ def index():
 @app.get("/healthz")
 def healthz():
     return jsonify({"ok": True, "service": "depthflow", "time": datetime.now().isoformat(timespec="seconds")})
-
-
-@app.get("/api/account")
-def account_summary():
-    account = getattr(g, "miyo_account", None)
-    if account is None:
-        return jsonify({"enabled": False})
-    return jsonify({"enabled": True, "account": account.public(), "login_url": MIYO_SERVICE.login_url})
-
-
-@app.post("/api/logout")
-def logout():
-    response = jsonify({"ok": True, "login_url": MIYO_SERVICE.login_url})
-    response.delete_cookie(MIYO_ACCOUNT_COOKIE, path="/")
-    return response
 
 
 @app.get("/projects/single")
@@ -7596,24 +6963,21 @@ def real_long_video_project():
 @app.get("/api/config")
 def config():
     load_env_file(override=True)
-    latest_depth = visible_job(restore_latest_depth_job())
-    latest_scene = visible_job(restore_latest_scene_job())
-    latest_cloud = visible_job(restore_latest_cloud_job(resume=not app.config.get("TESTING", False)))
-    latest_person_retry = visible_job(restore_latest_person_retry_job())
-    latest_person_submission = visible_job(restore_latest_person_submission_job())
-    latest_scene_only = visible_job(restore_latest_scene_only_job())
-    latest_clothing_only = visible_job(restore_latest_clothing_only_job())
-    latest_long_video = visible_job(restore_latest_long_video_job())
-    latest_real_long_video = visible_job(restore_latest_long_video_job(REAL_PERSON_LONG_PROJECT))
-    account = getattr(g, "miyo_account", None)
+    latest_depth = restore_latest_depth_job()
+    latest_scene = restore_latest_scene_job()
+    latest_cloud = restore_latest_cloud_job(resume=not app.config.get("TESTING", False))
+    latest_person_retry = restore_latest_person_retry_job()
+    latest_person_submission = restore_latest_person_submission_job()
+    latest_scene_only = restore_latest_scene_only_job()
+    latest_clothing_only = restore_latest_clothing_only_job()
+    latest_long_video = restore_latest_long_video_job()
+    latest_real_long_video = restore_latest_long_video_job(REAL_PERSON_LONG_PROJECT)
     return jsonify(
         {
             "ark_ready": bool(os.getenv("ARK_API_KEY", "").strip()),
             "tos_ready": TosMediaStore.configured(),
             "temporary_upload_ready": TempFileMediaStore.available(),
             "temporary_tunnel_ready": True,
-            "miyo_auth_enabled": MIYO_SERVICE.enabled,
-            "account": account.public() if account is not None else None,
             "latest_depth": latest_depth.public() if latest_depth else None,
             "latest_scene": latest_scene.public() if latest_scene else None,
             "latest_cloud": latest_cloud.public() if latest_cloud else None,
@@ -8324,7 +7688,6 @@ def persist_wardrobe_swap_job(
         job.run_dir / "wardrobe_manifest.json",
         {
             "local_job_id": job.id,
-            "user_id": job.user_id,
             "kind": job.kind,
             "project": WARDROBE_SWAP_PROJECT,
             "mode": mode,
@@ -8344,10 +7707,6 @@ def persist_wardrobe_swap_job(
             "actors": job.actors,
             "error": job.error,
             "recovery_action": job.recovery_action,
-            "billing_status": job.billing_status,
-            "billing_error": job.billing_error,
-            "billing_cost": job.billing_cost,
-            "billing_usage_id": job.billing_usage_id,
             "white_model_task_id": white_task_id,
         },
     )
@@ -8636,7 +7995,6 @@ def restore_wardrobe_swap_job(
                 and (not job_id or job.id == job_id)
                 and (not mode or wardrobe_mode_from_job(job) == mode)
                 and (not prepare_only or job.kind.startswith("wardrobe_prepare_"))
-                and (not MIYO_SERVICE.enabled or job.user_id == current_miyo_user_id())
             )
         ]
     cached = max(candidates, key=lambda item: item.created_at) if candidates else None
@@ -8648,8 +8006,6 @@ def restore_wardrobe_swap_job(
         try:
             record = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
-            continue
-        if MIYO_SERVICE.enabled and int(record.get("user_id") or 0) != current_miyo_user_id():
             continue
         restored_id = str(record.get("local_job_id") or manifest.parent.name.rsplit("_", 1)[-1])
         if job_id and restored_id != job_id:
@@ -8700,11 +8056,6 @@ def restore_wardrobe_swap_job(
         actors=list(record.get("actors") or []),
         error=str(record.get("error") or ""),
         recovery_action=str(record.get("recovery_action") or ""),
-        user_id=int(record.get("user_id") or 0),
-        billing_status=str(record.get("billing_status") or ""),
-        billing_error=str(record.get("billing_error") or ""),
-        billing_cost=float(record.get("billing_cost") or 0),
-        billing_usage_id=int(record.get("billing_usage_id") or 0),
         created_at=created_at,
     )
     if white_model:
@@ -8766,11 +8117,6 @@ def restore_wardrobe_white_model_job(parent_job: WebJob) -> WebJob | None:
         cloud_started_at=float(record.get("submitted_at") or time.time()),
         generation_duration=int(record.get("duration") or 0),
         error=str(record.get("error") or ""),
-        user_id=parent_job.user_id,
-        billing_status=str(record.get("billing_status") or ""),
-        billing_error=str(record.get("billing_error") or ""),
-        billing_cost=float(record.get("billing_cost") or 0),
-        billing_usage_id=int(record.get("billing_usage_id") or 0),
         created_at=str(record.get("created_at") or datetime.now().isoformat(timespec="seconds")),
     )
     restored.log(f"已恢复 Seedance 白膜任务 {task_id}；后续只查询和下载，不会重新提交。")
@@ -8856,7 +8202,6 @@ def create_wardrobe_swap_mosaic_job():
                     if candidate.project == WARDROBE_SWAP_PROJECT
                     and candidate.kind == f"wardrobe_prepare_{mode}"
                     and candidate.status in {"queued", "running", "submitted"}
-                    and (not MIYO_SERVICE.enabled or candidate.user_id == current_miyo_user_id())
                 ),
                 None,
             )
@@ -9368,7 +8713,6 @@ def resume_wardrobe_prepare_after_white_download(job: WebJob, mode: str) -> None
         if not white_job.output_path or not white_job.output_path.is_file():
             job.log(f"正在恢复白膜任务 {white_job.task_id}；只查询和下载，不会重新提交付费任务。")
             resume_cloud_job(white_job)
-        merge_child_billing(job, white_job, label="恢复的白膜动作母版")
         if white_job.status != "succeeded" or not white_job.output_path or not white_job.output_path.is_file():
             raise WorkflowError(
                 white_job.error
@@ -10474,17 +9818,12 @@ def analyze_long_cast_continuity(
     last_error: WorkflowError | None = None
     for attempt in range(1, attempts + 1):
         try:
-            return run_paid_analysis_call(
-                job,
-                analyzer,
-                feature=f"跨镜人物连续性分析第 {attempt} 次",
-                operation=lambda: analyzer.analyze_cast_continuity(
-                    video_url,
-                    shot_slot_counts=shot_slot_counts,
-                    shot_ranges=shot_ranges,
-                    max_characters=max_characters,
-                    retry_instruction=retry_instruction,
-                ),
+            return analyzer.analyze_cast_continuity(
+                video_url,
+                shot_slot_counts=shot_slot_counts,
+                shot_ranges=shot_ranges,
+                max_characters=max_characters,
+                retry_instruction=retry_instruction,
             )
         except ArkAPIError as exc:
             if not real_person_mode:
@@ -10593,15 +9932,10 @@ def run_long_performance_analysis(job: WebJob) -> None:
             uploaded_id = ""
             try:
                 video_reference, uploaded_id = long_performance_video_reference(job, source, store)
-                analysis = run_paid_analysis_call(
-                    job,
-                    analyzer,
-                    feature=f"分镜 {index:02d} 台词与表演分析",
-                    operation=lambda: analyzer.analyze(
-                        video_reference,
-                        duration=float(shot.get("duration") or inspect_video(source).duration),
-                        max_people=max(1, min(4, int(shot.get("suggested_actor_count") or 1))),
-                    ),
+                analysis = analyzer.analyze(
+                    video_reference,
+                    duration=float(shot.get("duration") or inspect_video(source).duration),
+                    max_people=max(1, min(4, int(shot.get("suggested_actor_count") or 1))),
                 )
             finally:
                 if uploaded_id:
@@ -10894,7 +10228,6 @@ def run_long_white_model_generation(
                     project=job.project,
                     run_dir=attempt_dir,
                     depth_path=reference,
-                    user_id=job.user_id,
                 )
                 final_sub_job = sub_job
                 with JOBS_LOCK:
@@ -10937,7 +10270,6 @@ def run_long_white_model_generation(
                     progress_start=5,
                     video_only=True,
                 )
-                merge_child_billing(job, sub_job, label=f"分镜 {index:02d} 白膜")
                 if sub_job.status != "succeeded" or not sub_job.output_path or not sub_job.output_path.is_file():
                     raise WorkflowError(sub_job.error or f"分镜 {index:02d} 白模生成未完成。")
                 attempt_suffix = (
@@ -11340,7 +10672,6 @@ def run_long_video_generation(
                 run_dir=shot_dir,
                 person_path=Path(first_person) if first_person and not first_person.startswith("asset://") else None,
                 clothing_path=Path(first_clothing) if first_clothing else None,
-                user_id=job.user_id,
             )
             with JOBS_LOCK:
                 JOBS[sub_id] = sub_job
@@ -11685,7 +11016,6 @@ def run_long_video_generation(
                                 include_scene_reference=True,
                             )
                             generation_mode = "real_character_asset" if real_person_mode else "multi"
-                    merge_child_billing(job, sub_job, label=f"分镜 {index:02d} 成片")
                     if pause_real_long_generation_at_boundary(
                         job,
                         shot_index=index,
@@ -13140,7 +12470,6 @@ def pause_real_long_video_job():
                 if candidate.project == REAL_PERSON_LONG_PROJECT
                 and candidate.id.startswith(f"{job.id}-s")
                 and candidate.status in {"queued", "running"}
-                and candidate.user_id == job.user_id
             ]
         for sub_job in sub_jobs:
             sub_job.update(pause_requested=True)
@@ -13183,7 +12512,6 @@ def create_real_long_archive():
             "name": name or f"真实人物复刻 · {datetime.now().strftime('%m-%d %H:%M')}",
             "saved_at": datetime.now().isoformat(timespec="seconds"),
             "workspace_id": job.workspace_id,
-            "user_id": job.user_id,
             "manifest_path": str(manifest),
             "snapshot": snapshot,
         }
@@ -13213,8 +12541,6 @@ def restore_real_long_archive(archive_id: str):
         snapshot = record.get("snapshot")
         if not isinstance(snapshot, dict) or snapshot.get("project") != REAL_PERSON_LONG_PROJECT:
             raise WorkflowError("存档内容无效，无法恢复。")
-        if MIYO_SERVICE.enabled and int(record.get("user_id") or snapshot.get("user_id") or 0) != current_miyo_user_id():
-            raise WorkflowError("找不到该存档，或当前账号无权访问。")
         archive_workspace_id = str(record.get("workspace_id") or snapshot.get("workspace_id") or "")
         if requested_workspace_id and archive_workspace_id and requested_workspace_id != archive_workspace_id:
             raise WorkflowError("该存档不属于当前重绘项目。")
@@ -13224,7 +12550,6 @@ def restore_real_long_archive(archive_id: str):
                 job for job in JOBS.values()
                 if job.project == REAL_PERSON_LONG_PROJECT
                 and job.status in {"queued", "running"}
-                and (not MIYO_SERVICE.enabled or job.user_id == current_miyo_user_id())
                 and (
                     (target_workspace_id and job.workspace_id == target_workspace_id)
                     or (not target_workspace_id and job.id == str(snapshot.get("local_job_id") or ""))
@@ -13267,13 +12592,6 @@ def delete_real_long_archive(archive_id: str):
         path = real_long_archive_path(archive_id)
         if not path.is_file():
             raise WorkflowError("所选存档不存在或已被删除。")
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError) as exc:
-            raise WorkflowError("存档内容无效，无法删除。") from exc
-        snapshot = record.get("snapshot") if isinstance(record.get("snapshot"), dict) else {}
-        if MIYO_SERVICE.enabled and int(record.get("user_id") or snapshot.get("user_id") or 0) != current_miyo_user_id():
-            raise WorkflowError("找不到该存档，或当前账号无权访问。")
         path.unlink()
         workspace_id = str(request.args.get("workspace_id") or "").strip()
         workspace = get_long_workspace_record(REAL_PERSON_LONG_PROJECT, workspace_id)
@@ -13308,26 +12626,15 @@ def query_existing_task():
     }
     if project not in allowed_projects:
         project = "single_person_replication"
+    job = new_job("multi_query" if project == "multi_person_replication" else "query")
+    job.project = project
     source_job_id = str(data.get("source_job_id") or "").strip()
     source_job = None
-    if MIYO_SERVICE.enabled and not source_job_id:
-        return jsonify(
-            {
-                "error": "正式账号模式只能恢复当前账号已有的本地任务，不能查询任意外部任务 ID。",
-                "code": "TASK_OWNERSHIP_REQUIRED",
-            }
-        ), 403
     if source_job_id:
         try:
             source_job = get_job(source_job_id)
         except WorkflowError:
             source_job = restore_cloud_job(source_job_id)
-    if MIYO_SERVICE.enabled and source_job is None:
-        return jsonify({"error": "找不到当前账号可恢复的源任务。", "code": "TASK_OWNERSHIP_REQUIRED"}), 403
-    if MIYO_SERVICE.enabled and source_job and source_job.task_id and source_job.task_id != task_id:
-        return jsonify({"error": "任务 ID 与当前账号的源任务不一致。", "code": "TASK_OWNERSHIP_REQUIRED"}), 403
-    job = new_job("multi_query" if project == "multi_person_replication" else "query")
-    job.project = project
     if source_job:
         job.depth_path = source_job.depth_path
         job.scene_path = source_job.scene_path

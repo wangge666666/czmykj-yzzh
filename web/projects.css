@@ -26,12 +26,6 @@ a { color: inherit; text-decoration: none; }
 .brand small { margin-top: 1px; color: var(--muted); font-size: 11px; }
 .system-state { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.55); color: var(--muted); font-size: 12px; font-weight: 700; }
 .system-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(15,118,83,.12); }
-.account-state { display: flex; align-items: center; gap: 12px; }
-.account-state[hidden] { display: none; }
-.account-state span, .account-state b, .account-state small { display: block; }
-.account-state b { font-size: 12px; text-align: right; }
-.account-state small { color: var(--muted); font-size: 10px; }
-.account-state button { padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.62); color: var(--green-dark); cursor: pointer; font: inherit; font-size: 11px; font-weight: 800; }
 
 main { width: min(1440px, calc(100% - 48px)); margin: 0 auto; }
 .hero { display: grid; min-height: 470px; padding: 84px 0 70px; align-content: center; grid-template-columns: minmax(0, 790px); position: relative; }
