@@ -1,4 +1,29 @@
 (function () {
+  async function loadAccount() {
+    try {
+      const response = await fetch("/api/account", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (!payload.enabled || !payload.account) return;
+      const account = payload.account;
+      const state = document.querySelector("#accountState");
+      const localState = document.querySelector("#localState");
+      document.querySelector("#accountName").textContent = account.username || "CZMIYOU 用户";
+      document.querySelector("#accountMeta").textContent = `产品 4 · 余额 ¥${Number(account.balance || 0).toFixed(2)} · 剩余 ${Number(account.days_remaining || 0)} 天`;
+      state.hidden = false;
+      localState.hidden = true;
+      state.dataset.loginUrl = payload.login_url || "";
+    } catch (_) {
+      // 账号摘要只是展示增强；真正的权限仍由服务端统一校验。
+    }
+  }
+
+  async function logout() {
+    const response = await fetch("/api/logout", { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    window.location.href = payload.login_url || document.querySelector("#accountState")?.dataset.loginUrl || "/";
+  }
+
   function buildCategories() {
     const registry = window.DepthFlowRegistry;
     const source = document.querySelector(".project-grid");
@@ -29,6 +54,12 @@
     source.dataset.grouped = "true";
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", buildCategories);
-  else buildCategories();
+  function boot() {
+    buildCategories();
+    loadAccount();
+    document.querySelector("#logoutButton")?.addEventListener("click", logout);
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
 })();

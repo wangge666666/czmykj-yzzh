@@ -682,8 +682,12 @@ class ArkPerformanceAnalyzer:
         self.base_url = base_url.rstrip("/")
         self.model = model.strip() or DEFAULT_PERFORMANCE_MODEL
         self.session = session or requests.Session()
+        self.last_usage: dict[str, Any] | None = None
+        self.last_response_id = ""
 
     def analyze(self, video_url: str, *, duration: float, max_people: int = 4) -> dict[str, Any]:
+        self.last_usage = None
+        self.last_response_id = ""
         body = {
             "model": self.model,
             "input": [
@@ -722,6 +726,8 @@ class ArkPerformanceAnalyzer:
             payload = response.json()
         except ValueError as exc:
             raise WorkflowError("表演分析接口返回了非 JSON 响应。") from exc
+        self.last_usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
+        self.last_response_id = str(payload.get("id") or "").strip()
         raw = _json_from_text(_response_text(payload))
         return normalize_performance_analysis(raw, duration=duration, max_people=max_people)
 
@@ -734,6 +740,8 @@ class ArkPerformanceAnalyzer:
         max_characters: int = 4,
         retry_instruction: str = "",
     ) -> dict[str, Any]:
+        self.last_usage = None
+        self.last_response_id = ""
         timeline = "\n".join(
             f"分镜{int(item['index']):02d}：全片 {float(item['start']):.3f}–{float(item['end']):.3f} 秒，"
             f"共有 {int(shot_slot_counts.get(int(item['index']), 0))} 个槽位。"
@@ -782,6 +790,8 @@ class ArkPerformanceAnalyzer:
             payload = response.json()
         except ValueError as exc:
             raise WorkflowError("跨镜人物连续性分析接口返回了非 JSON 响应。") from exc
+        self.last_usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
+        self.last_response_id = str(payload.get("id") or "").strip()
         raw = _json_from_text(
             _response_text(payload),
             analysis_label="跨镜人物连续性分析",
