@@ -1,0 +1,7 @@
+{$DEPTHFLOW_DOMAIN} {
+    encode zstd gzip
+    request_body {
+        max_size 450MB
+    }
+    reverse_proxy app:7860
+}

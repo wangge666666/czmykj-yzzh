@@ -1,0 +1,59 @@
+.multi-hero { max-width: 940px; }
+.multi-depth-panel { position: relative; }
+.multi-depth-visual { height: 228px; position: relative; overflow: hidden; border-radius: 19px; background: linear-gradient(180deg, #020403 0 45%, #232826 45% 51%, #dfe2e0 100%); }
+.multi-floor { position: absolute; left: -12%; right: -12%; bottom: -34%; height: 82%; background: linear-gradient(180deg, #666c69, #f8f9f8); transform: perspective(180px) rotateX(24deg); transform-origin: top; }
+.depth-figure { position: absolute; z-index: 3; top: 40px; width: 88px; height: 174px; }
+.depth-figure i, .depth-figure b, .depth-figure span { position: absolute; display: block; background: linear-gradient(135deg, #fff, #cfd3d1); }
+.depth-figure i { left: 29px; width: 34px; height: 40px; border-radius: 50% 50% 44% 44%; }
+.depth-figure b { left: 18px; top: 36px; width: 56px; height: 104px; border-radius: 20px 20px 12px 12px; }
+.depth-figure span { left: 1px; top: 54px; width: 86px; height: 20px; border-radius: 999px; transform: rotate(-12deg); }
+.figure-one { left: 31%; transform: rotate(-4deg); }
+.figure-two { right: 28%; top: 47px; transform: scale(.92) rotate(7deg); filter: brightness(.82); }
+
+.actors-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.actor-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.actor-controls > span { padding: 7px 10px; border-radius: 999px; color: var(--green-dark); background: rgba(191,241,215,.42); font-size: 11px; font-weight: 800; }
+.actor-list { display: grid; gap: 15px; }
+.actor-card { border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.58); overflow: hidden; }
+.actor-card-head { padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #fff; background: #173e31; }
+.actor-card-head > div { display: flex; align-items: center; gap: 10px; }
+.actor-index { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; color: var(--green-dark); background: var(--lime); font-size: 11px; font-weight: 900; }
+.actor-card-head b { font-size: 14px; }
+.actor-card-head small { color: rgba(255,255,255,.62); font-size: 10px; }
+.actor-map { color: var(--lime); font-size: 10px; font-weight: 800; }
+.actor-body { padding: 16px; display: grid; grid-template-columns: .8fr 1fr 1fr; gap: 14px; align-items: stretch; }
+.role-field { padding: 13px; border-radius: 15px; background: rgba(191,241,215,.2); }
+.role-field input { background: #fff; }
+.role-field .role-help { margin-top: 5px; color: var(--muted); font-size: 10px; }
+.actor-asset { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 15px; }
+.actor-asset-title { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+.actor-asset-title span { color: var(--green); font-size: 10px; font-weight: 900; }
+.actor-asset-title b { font-size: 12px; }
+.actor-asset .mini-drop { min-height: 96px; padding: 12px 8px; }
+.asset-or { margin: 8px 0 5px; color: var(--muted); font-size: 9px; text-align: center; }
+.actor-asset input[type="text"] { width: 100%; height: 35px; padding: 0 9px; border: 1px solid var(--line); border-radius: 9px; outline: none; background: rgba(255,255,255,.8); font-size: 10px; }
+.actor-asset input[type="text"]:focus { border-color: rgba(15,118,83,.58); box-shadow: 0 0 0 3px rgba(15,118,83,.08); }
+.shared-scene-card { margin-top: 15px; padding: 18px; display: grid; grid-template-columns: 1fr 320px; align-items: center; gap: 22px; border: 1px solid rgba(15,118,83,.18); border-radius: 20px; background: linear-gradient(135deg, rgba(218,250,137,.24), rgba(191,241,215,.25)); }
+.shared-scene-card h3 { margin: 8px 0 4px; font-size: 18px; }
+.shared-scene-card p { margin: 0; color: var(--muted); font-size: 12px; }
+.reference-chip { padding: 5px 8px; border-radius: 7px; color: #fff; background: var(--green); font-size: 10px; font-weight: 900; }
+.scene-drop { min-height: 100px; }
+.multi-settings { grid-template-columns: 2fr repeat(3, 1fr); }
+.task-panel { scroll-margin-top: 90px; }
+
+@media (max-width: 900px) {
+  .actors-heading { flex-direction: column; }
+  .actor-controls { width: 100%; justify-content: flex-start; }
+  .actor-body { grid-template-columns: 1fr 1fr; }
+  .role-field { grid-column: 1 / -1; }
+  .shared-scene-card { grid-template-columns: 1fr; }
+  .multi-settings { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 640px) {
+  .actor-body, .multi-settings { grid-template-columns: 1fr; }
+  .role-field { grid-column: auto; }
+  .actor-card-head { align-items: flex-start; }
+  .actor-map { max-width: 130px; text-align: right; }
+  .actor-controls button { flex: 1; }
+  .shared-scene-card { padding: 15px; }
+}

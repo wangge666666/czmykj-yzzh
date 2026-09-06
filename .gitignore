@@ -1,94 +1,37 @@
-node_modules
-dist
-.DS_Store
-*.swp
-.git/*
-__pycache__/
-*.pyc
-.venv/*
-*.o
-*.a
-/vendor
-*.egg-info/
-/.env
 .env
-.cozeproj/reduction
+.env.*
+!.env.example
+!deploy/.env.production.example
 
-# JS/TS bundlers & build outputs
-.next
-.nuxt
-.turbo
-.vercel
-.parcel-cache
-.cache
-coverage
-storybook-static
-
-# Package manager artifacts
-.pnp*
-.npm
-
-# Python tooling
+# Local runtimes and caches
+.venv*/
+__pycache__/
+*.py[cod]
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.tox/
 
-# Go tooling
-bin/
-*.test
-
-# Editor / IDE
-.vscode/
-.idea/
-*.iml
-
-# OS / misc
-Thumbs.db
-ehthumbs.db
-
-# Logs
-output.log
-*.log
-*.log.*
+# Local application state and large bundled runtimes
+.hf-v2v/
+.seedance-browser-profile/
+backups/
 logs/
+models/
+tools/blender-*
 
-# 视频文件
-*.mp4
-*.avi
-*.mov
-*.wmv
-*.flv
-*.mkv
-*.webm
-*.m4v
-*.mpeg
-*.mpg
-*.3gp
-*.f4v
-*.rmvb
-*.vob
+# Generated and downloaded media
+runs/
+output/
+work/
+downloads/
+tools/cloudflared.exe
+tools/cloudflared-*.download
 
-# 归档文件
-*.iso
-*.dmg
-*.rar
-*.zip
-*.gz
+# Server diagnostics and local source-analysis snapshots
+*.log
+/*.png
 
-# 文档类也默认加入
-*.pdf
-*.docx
-*.doc
-*.xlsx
-*.xls
-*.ppt
-*.pptx
-*.xlsx
-*.csv
+# Locally produced source packages
+packages/
+dist/
 
-# Preview files
-.preview
-
-# CodeGraph index
-.codegraph
+# Dedicated local browser profile for the Seedance web workflow
+.seedance-browser-profile/

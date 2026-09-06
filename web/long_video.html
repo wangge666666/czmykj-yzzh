@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>虚拟人物复刻重绘 · DepthFlow</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260808-5">
+  <link rel="stylesheet" href="/static/person.css?v=20260807-3">
+  <link rel="stylesheet" href="/static/long_video.css?v=20260812-02">
+  <link rel="stylesheet" href="/static/workflow_shell.css?v=20260824-3">
+</head>
+<body>
+  <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="返回项目中心"><span class="brand-mark long-mark">虚</span><span><strong>虚拟人物复刻重绘</strong><small>长视频多分镜复刻 · 3D / 2D / 虚拟角色</small></span></a>
+    <div class="system-state"><span id="arkBadge" class="badge waiting"><i></i>API 检查中</span><span id="channelBadge" class="badge waiting"><i></i>临时通道检查中</span></div>
+  </header>
+  <main>
+    <section class="hero long-hero">
+      <div class="eyebrow">VIRTUAL CHARACTER · SHOT-LEVEL REPLICATION</div>
+      <h1>原片先打码，再做白模，<br><span>最后完成整片重绘。</span></h1>
+      <p>面向3D渲染、2D动画和其他虚拟角色素材。自动拆镜与遮脸，白模锁定动作、景别和运镜，现有稳定流程保持不变。</p>
+      <div class="hero-pills"><span>多脸时序打码</span><span>台词表演提取</span><span>白模绿幕母版</span><span>逐镜最终重绘</span></div>
+    </section>
+
+    <nav class="stepper"><a href="#source"><b>01</b><span>长视频</span></a><i></i><a href="#shots"><b>02</b><span>分析分镜</span></a><i></i><a href="#preprocess"><b>03</b><span>打码与白模</span></a><i></i><a href="#references"><b>04</b><span>角色场景</span></a><i></i><a href="#generate"><b>05</b><span>最终重绘</span></a></nav>
+
+    <form id="longWorkflowForm" novalidate>
+      <section class="workspace-grid">
+        <article id="source" class="panel upload-panel">
+          <div class="panel-heading"><span class="step-number">01</span><div><h2>提交长视频原片</h2><p>支持自动识别硬切与明显场景变化</p></div></div>
+          <label class="dropzone" for="referenceVideo"><input id="referenceVideo" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"><span class="upload-icon">＋</span><strong>选择或拖入长视频</strong><small>逐帧识别全部真实转场；短于4秒的分镜也会完整保留</small><span id="videoFileName" class="file-name">尚未选择文件</span></label>
+          <div class="field"><label for="sensitivity">分镜检测灵敏度 <em id="sensitivityValue">0.30</em></label><input id="sensitivity" type="range" min="0.08" max="0.75" step="0.01" value="0.30"><small>数值越低越容易识别细微转场；推荐先使用0.30。检测到的短分镜不会再被合并。</small></div>
+          <div class="field"><label for="manualCuts">手动补充切点 <em>可选</em></label><input id="manualCuts" type="text" inputmode="decimal" placeholder="例如：3.73, 5.87, 7.73"><small>自动检测仍有遗漏时填写秒数；这些切点会被强制保留，不受分镜时长限制。</small></div>
+        </article>
+        <article id="shots" class="panel analysis-panel">
+          <div class="panel-heading"><span class="step-number">02</span><div><h2>免费分析、拆分并估算人数</h2><p>只在本机运行；短分镜保持原动作速度，片尾定格延长到生成时长，成片无变速裁回原时长</p></div></div>
+          <div class="analysis-visual"><span>长视频</span><i>→</i><div><b>SHOT 01 · 1人</b><b>SHOT 02 · 2人</b><b>SHOT 03 · 0人</b></div></div>
+          <button id="analyzeBtn" class="secondary-button prepare-button" type="button">免费分析分镜</button><span id="analysisState" class="inline-state">尚未分析</span>
+        </article>
+      </section>
+
+      <section id="preprocess" class="panel redraw-pipeline-panel">
+        <div class="panel-heading"><span class="step-number">03</span><div><h2>隐私打码、表演提取与白模母版</h2><p>原片先在本地遮脸；白模与最终重绘分别独立生成，任何付费步骤都需要你手动点击</p></div></div>
+        <div class="redraw-stage-grid">
+          <article class="redraw-stage-card">
+            <span class="stage-chip local">LOCAL · 免费</span><h3>① 多脸时序打码</h3><p>YuNet 每帧检测并跨帧跟踪，扩大遮罩覆盖额头、下颌与快速运动区域，输出保留原声。</p>
+            <div class="compact-setting-grid"><div class="field"><label for="blockSize">马赛克块大小</label><input id="blockSize" type="number" min="8" max="48" value="18"></div><div class="field"><label for="faceScoreThreshold">检测阈值</label><input id="faceScoreThreshold" type="number" min="0.30" max="0.90" step="0.05" value="0.55"></div></div>
+            <button id="mosaicBtn" class="secondary-button" type="button" disabled>生成完整打码视频</button>
+          </article>
+          <article class="redraw-stage-card">
+            <span class="stage-chip cloud">ARK · 需确认</span><h3>② 台词与表演神色</h3><p>逐镜提取原台词、说话人、语气、时间点，以及整体情绪、眼神、表情和姿态证据。</p>
+            <label class="consent-row"><input id="performanceConsent" type="checkbox"><span>我同意临时上传原片分镜用于多模态分析</span></label>
+            <button id="performanceBtn" class="secondary-button" type="button" disabled>分析全部分镜的台词与表演</button>
+          </article>
+          <article class="redraw-stage-card white-stage-card">
+            <span class="stage-chip paid">SEEDANCE 2.0 · 480P · 按镜计费</span><h3>③ 白模绿幕动作母版</h3><p>无需上传白模参考。固定使用480p低成本规格，只参考打码分镜的动作与运镜。</p>
+            <div class="fixed-white-rules" aria-label="固定白模规则"><b>固定输出规则</b><span>光滑光头 · 无发型毛发</span><span>不透明纯白素体 · 无原服装配件</span><span>中性封闭人体外壳 · 无身份五官</span><span>纯白哑光立体材质 · 标准绿幕 #00B140</span></div>
+            <label class="consent-row"><input id="privacyReviewConfirmed" type="checkbox"><span>我已逐镜检查打码视频，确认没有漏脸</span></label>
+            <button id="whiteModelBtn" class="primary-button" type="button" disabled>按分镜生成并合并白模视频</button>
+          </article>
+        </div>
+        <div class="intermediate-preview-grid">
+          <article id="mosaicPreviewArea" class="preview-card hidden"><div class="preview-heading"><div><span>PRIVACY</span><b>完整打码视频</b></div><small>提交白模前必须人工复核</small></div><video id="mosaicVideo" controls playsinline preload="metadata"></video><div class="result-actions"><a id="mosaicDownloadLink" class="secondary-button" href="#">下载打码视频</a></div></article>
+          <article id="whitePreviewArea" class="preview-card hidden"><div class="preview-heading"><div><span>WHITE MODEL</span><b>白模绿幕动作母版</b></div><small>最终重绘的动作与运镜参考</small></div><video id="whiteModelVideo" controls playsinline preload="metadata"></video><div class="result-actions"><a id="whiteModelDownloadLink" class="secondary-button" href="#">下载白模视频</a></div></article>
+        </div>
+      </section>
+
+      <section id="references" class="panel actor-library-panel">
+        <div class="actors-heading">
+          <div class="panel-heading"><span class="step-number">04</span><div><h2>建立人物替换库与多场景素材库</h2><p>人物按 P1/P2 映射；新场景可以建立多组，每组上传多个机位角度</p></div></div>
+          <div class="actor-controls"><span id="actorCountLabel">1 位角色</span><button id="removeActorBtn" class="ghost-button small" type="button">减少人物</button><button id="addActorBtn" class="secondary-button" type="button">＋ 添加人物</button></div>
+        </div>
+        <div id="actorList" class="long-actor-list"></div>
+        <div class="notice"><b>角色编号保持固定</b><span>例如人物2在某个单人分镜中独自出现，系统仍会使用人物2的形象和服装；此入口只用于3D、2D等虚拟人物素材，真人素材请进入“真实人物复刻重绘”。</span></div>
+        <div class="long-scene-library">
+          <div class="scene-library-heading"><div><b>多场景素材库</b><small>一个场景组代表同一地点，可上传1–6张不同角度；所有分镜都必须匹配新场景。</small></div><div><span id="sceneGroupCount">1 个场景组 · 0 张图</span><button id="addSceneGroupBtn" class="secondary-button" type="button">＋ 添加场景组</button><button id="autoMatchScenesBtn" class="ghost-button small" type="button">自动匹配全部分镜</button></div></div>
+          <div id="sceneGroupList" class="scene-group-list"></div>
+        </div>
+      </section>
+
+      <section id="generate" class="panel generation-panel">
+        <div class="panel-heading"><span class="step-number">05</span><div><h2>逐镜头最终重绘与自动合并</h2><p>白模锁定动作运镜；0人重绘新场景；1人走单人流程；2–4人自动走多人流程</p></div></div>
+        <div class="model-sections">
+          <div class="model-section seedream-section"><div class="model-section-title"><span>Seedream 5.0</span><b>将新场景匹配到每个分镜机位</b></div><div class="field"><label for="imageModel">图片模型</label><input id="imageModel" type="text" value="doubao-seedream-5-0-260128"></div><div class="field"><label for="blurRange">运动模糊补偿帧 <em>可选</em></label><input id="blurRange" type="text" placeholder="通常留空"></div><div class="prompt-block"><div class="prompt-label"><label for="scenePrompt">新场景机位匹配提示词</label><button id="resetScenePromptBtn" class="text-button" type="button">恢复推荐</button></div><textarea id="scenePrompt" rows="7"></textarea><small>只读取深度帧的机位与空间，不提取、不保留原场景。</small></div></div>
+          <div class="model-section seedance-section">
+            <div class="model-section-title"><span>Seedance 2.0</span><b>按分镜人数动态复刻</b></div>
+            <div class="final-style-library"><div class="final-style-heading"><div><b>成片风格库</b><small>默认自动跟随新人物参考图，也可以强制整片使用统一画风</small></div><span>逐镜一致</span></div><input id="finalStyle" type="hidden" value="match_character"><div id="finalStyleLibrary" class="style-preset-grid"></div></div>
+            <div class="long-settings-grid"><div class="field"><label for="model">视频模型</label><input id="model" type="text" value="doubao-seedance-2-0-260128"></div><div class="field"><label for="resolution">分辨率</label><select id="resolution"><option>480p</option><option selected>720p</option><option>1080p</option><option>4k</option></select></div><div class="field"><label for="ratio">画面比例</label><select id="ratio"><option selected>adaptive</option><option>16:9</option><option>4:3</option><option>1:1</option><option>3:4</option><option>9:16</option><option>21:9</option></select></div></div>
+            <div class="toggle-row"><label><input id="requireWhiteModel" type="checkbox" checked><span></span>强制使用白模母版</label><div class="voice-mode-note"><b>固定新声音</b> Seedance根据新人物生成音色，不使用原人物声音</div><div class="no-text-mode-note"><b>固定无文字</b> 禁止字幕、标题、Logo、角标和水印</div><label><input id="deleteTos" type="checkbox" checked><span></span>删除临时公开视频</label></div>
+            <div class="prompt-block"><div class="prompt-label"><label for="prompt">所有分镜共用的动作与构图约束</label><button id="resetPromptBtn" class="text-button" type="button">恢复推荐</button></div><textarea id="prompt" rows="8"></textarea><small>人物和@图片编号由系统针对每个分镜自动生成；所选成片风格、人工校订台词和表演会由系统逐镜追加。</small></div>
+          </div>
+        </div>
+        <div class="long-cost"><div><b id="costTitle">请先免费分析分镜</b><small id="costNote">分析并确认分镜角色后显示实际调用数量</small></div><div class="long-generate-actions"><button id="regenerateAllBtn" class="secondary-button" type="button" disabled>重新生成全部分镜</button><button id="generateBtn" class="primary-button" type="button" disabled>按角色配置生成并合并</button></div></div>
+      </section>
+    </form>
+
+    <section class="panel task-panel">
+      <div class="panel-heading compact-heading"><span class="step-number neutral">●</span><div><h2>分镜人物映射、场景、进度与预览</h2><p>本地人体检测会标出 P1/P2；付费生成前请确认每个原片人物对应的新人物</p></div></div>
+      <div id="emptyTask" class="empty-task"><span>◎</span><b>还没有分镜分析</b><small>上传长视频并点击“免费分析分镜”。</small></div>
+      <div id="activeTask" class="active-task hidden">
+        <div class="task-summary"><div><span id="jobKind" class="job-kind">长视频多分镜</span><h3 id="jobStage">正在分析</h3><small id="jobMeta"></small></div><strong id="progressPercent">0%</strong></div>
+        <div class="progress-track"><span id="progressBar"></span></div><pre id="jobLogs" class="job-logs"></pre>
+        <div id="shotGrid" class="shot-grid"></div>
+        <label id="castConfirmBar" class="cast-confirm-bar hidden"><input id="confirmCast" type="checkbox"><span><b>我已核对全部分镜的人物与新场景映射</b><small>每个分镜都必须选择场景组和具体角度；无人镜头也会重绘，不再保留原画面。</small></span></label>
+        <article id="finalResultArea" class="preview-card long-final hidden"><div class="preview-heading"><div><span>FINAL</span><b>多分镜合并成片</b></div><small>已按原始顺序与时长合并</small></div><video id="finalResultVideo" controls playsinline preload="metadata"></video><div class="result-actions"><a id="finalDownloadLink" class="primary-button" href="#">下载长视频最终成片</a></div></article>
+        <section id="downloadCenter" class="result-download-center hidden" aria-label="结果下载中心">
+          <div class="download-center-heading"><div><span>DOWNLOAD CENTER</span><h3>结果下载中心</h3><p>完整母版、完整成片与逐分镜文件集中下载。</p></div><div id="downloadBundleLinks" class="download-bundle-links"></div></div>
+          <div class="download-list-grid">
+            <article><div class="download-list-title"><b>白模视频</b><small>逐镜白模绿幕动作母版</small></div><div id="whiteShotDownloadList" class="download-shot-list"></div></article>
+            <article><div class="download-list-title"><b>裁剪前成品片段</b><small>Seedance 返回、尚未按原分镜时长裁剪的片段</small></div><div id="finalShotDownloadList" class="download-shot-list"></div></article>
+          </div>
+        </section>
+        <div class="preview-folder-action"><button id="openFolderBtn" class="ghost-button" type="button">打开本地结果目录</button></div>
+      </div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/project_registry.js?v=20260823-2" defer></script>
+  <script src="/static/workflow_common.js?v=20260824-3" defer></script>
+  <script src="/static/upload_preview.js?v=20260808-1" defer></script>
+  <script src="/static/long_video.js?v=20260814-06&amp;workspaces=1" defer></script>
+</body>
+</html>

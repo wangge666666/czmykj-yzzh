@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="衣装智换：人物、场景、服装局部替换与随心换">
+  <title>衣装智换 · DepthFlow Studio</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260825-1">
+  <link rel="stylesheet" href="/static/workflow_shell.css?v=20260825-2">
+  <link rel="stylesheet" href="/static/wardrobe.css?v=20260825-2">
+</head>
+<body>
+  <header class="topbar wardrobe-topbar">
+    <a class="brand" href="/"><span class="brand-mark">衣</span><span><strong>衣装智换</strong><small>人物 · 场景 · 服装 · 随心换</small></span></a>
+    <div class="topbar-actions"><span id="arkBadge" class="status-badge">API 检测中</span><span class="model-chip">Seedance 2.5</span></div>
+  </header>
+
+  <form id="wardrobeForm" class="wardrobe-layout">
+    <aside class="wardrobe-sidebar">
+      <div class="sidebar-title"><small>WORKFLOW</small><b>操作步骤</b></div>
+      <nav id="stepNav">
+        <a href="#mode"><i>01</i><span>选择功能</span></a>
+        <a href="#source"><i>02</i><span>上传原片</span></a>
+        <a href="#prepare"><i>03</i><span>打码/白膜/提取</span></a>
+        <a href="#references"><i>04</i><span>人物与素材</span></a>
+        <a href="#generate"><i>05</i><span>生成成片</span></a>
+        <a href="#result"><i>06</i><span>预览下载</span></a>
+      </nav>
+      <a class="sidebar-home" href="/">← 返回项目中心</a>
+    </aside>
+
+    <main class="wardrobe-main">
+      <section class="wardrobe-hero">
+        <div><span>UNIFIED LOCAL REPLACEMENT</span><h1>一个项目，完成四种视觉智换</h1><p>白膜只控制动作、站位、构图与运镜；人物角色、服装和场景各自使用独立参考，也可在随心换中自由组合。</p></div>
+        <div class="hero-flow"><b>原片打码</b><i>→</i><b>白膜母版</b><i>→</i><b>三类素材</b><i>→</i><b>Seedance 2.5</b></div>
+      </section>
+
+      <section id="mode" class="panel mode-panel">
+        <div class="panel-heading"><div><span>步骤 01</span><h2>选择替换功能</h2></div><small>四种模式共用打码、白膜、素材库和结果预览能力</small></div>
+        <div class="mode-grid" role="tablist">
+          <button type="button" class="mode-card" data-mode="person"><i>人</i><span><b>只更换人物</b><small>原背景 + 原服装 + 新人物</small></span></button>
+          <button type="button" class="mode-card" data-mode="scene"><i>景</i><span><b>只更换场景</b><small>原人物 + 原服装 + 新场景</small></span></button>
+          <button type="button" class="mode-card" data-mode="clothing"><i>衣</i><span><b>只更换服装</b><small>原人物 + 原场景 + 新服装</small></span></button>
+          <button type="button" class="mode-card" data-mode="custom"><i>换</i><span><b>随心换</b><small>人物 + 服装 + 场景自由组合</small></span></button>
+        </div>
+        <input id="modeInput" name="mode" type="hidden" value="person">
+      </section>
+
+      <section id="source" class="panel">
+        <div class="panel-heading"><div><span>步骤 02</span><h2>上传原片</h2></div><small>超过 15 秒自动截取前 15 秒</small></div>
+        <label class="media-drop"><input id="referenceVideo" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"><span class="drop-icon">▶</span><b>选择原片视频</b><small id="videoName">MP4 / MOV · 后续流程最长使用前 15 秒</small></label>
+        <video id="sourcePreview" class="media-preview hidden" controls playsinline preload="metadata"></video>
+      </section>
+
+      <section id="prepare" class="panel">
+        <div class="panel-heading"><div><span>步骤 03</span><h2>打码、白膜与素材提取</h2></div><small>三个任务独立执行、独立失败、独立重试</small></div>
+        <div class="split-prepare-grid">
+          <article class="split-action-card local-stage">
+            <header><i>1</i><div><b>生成人脸打码视频</b><small>纯本地处理 · 免费</small></div></header>
+            <p>只检测并遮挡原片人物面部。完成后先人工预览打码是否完整，再决定是否提交白膜。</p>
+            <button id="mosaicBtn" class="primary-button large-action" type="button">生成打码视频</button>
+            <small id="mosaicReason" class="button-reason"></small>
+          </article>
+          <article class="split-action-card paid-stage">
+            <header><i>2</i><div><b>生成白膜动作母版</b><small>Seedance 2.0 · 480p</small></div></header>
+            <p>只复用上一步打码视频生成白膜，不再重新打码，也不会在本步提取图片素材。</p>
+            <div class="stage-cost"><span>预计提交</span><b>1 次付费视频任务</b></div>
+            <button id="whiteModelBtn" class="primary-button large-action" type="button" disabled>生成白膜视频</button>
+            <small id="whiteModelReason" class="button-reason">请先生成并预览打码视频。</small>
+          </article>
+          <article class="split-action-card extract-stage">
+            <header><i>3</i><div><b>提取人物、服装与场景</b><small>Seedream 5.0</small></div></header>
+            <p>白膜完成后再单独提取。已有的原片参考可以上传复用，只对缺失项目产生提取费用。</p>
+            <label class="toggle-line"><input id="extractMissing" type="checkbox" checked><span>缺少的原片素材使用 Seedream 5.0 提取</span></label>
+            <div class="stage-cost"><span>预计提交</span><b id="extractionCostNote">0–3 次图片任务</b></div>
+            <button id="extractReferencesBtn" class="primary-button large-action" type="button" disabled>提取/确认素材</button>
+            <small id="extractReason" class="button-reason">请先生成白膜视频。</small>
+          </article>
+        </div>
+      </section>
+
+      <section id="references" class="panel">
+        <div class="panel-heading"><div><span>步骤 04</span><h2>人物、服装与场景参考</h2></div><small id="referenceStepNote">上传已有素材可避免对应的 Seedream 提取费用</small></div>
+        <div class="reference-grid">
+          <label id="originalSceneField" class="image-drop"><input id="originalSceneImage" type="file" accept="image/*"><span>原场景图</span><b>上传原片背景</b><small>缺少时自动提取</small></label>
+          <label id="originalClothingField" class="image-drop"><input id="originalClothingImage" type="file" accept="image/*"><span>原服装图</span><b>上传原片服装</b><small>缺少时自动提取</small></label>
+          <label id="newSceneField" class="image-drop target-drop hidden"><input id="newSceneImage" type="file" accept="image/*"><span>替换目标</span><b>上传新场景图</b><small>成片只更换场景</small></label>
+          <label id="newClothingField" class="image-drop target-drop hidden"><input id="newClothingImage" type="file" accept="image/*"><span>替换目标</span><b>上传新服装图</b><small>成片只更换服装</small></label>
+        </div>
+        <div id="preparedReferences" class="prepared-references hidden">
+          <article id="preparedSceneCard" class="hidden"><img id="preparedSceneImage" alt="原场景参考"><b>原场景参考</b></article>
+          <article id="preparedClothingCard" class="hidden"><img id="preparedClothingImage" alt="原服装参考"><b>原服装参考</b></article>
+          <article id="preparedPersonCard" class="prepared-person-card hidden">
+            <div id="preparedPersonPlaceholder" class="prepared-person-placeholder"><b>尚未生成人物预览</b><small>提取结果统一穿纯白短袖 T 恤和纯白短裤；可单独重试，不会重做白膜和其他素材。</small></div>
+            <img id="preparedPersonImage" class="hidden" alt="原片人物提取预览">
+            <b>原片人物三视图（白 T 短裤）</b>
+            <small id="preparedPersonPreviewStatus">等待人物提取。</small>
+            <a id="preparedPersonDownload" class="hidden" href="#" download>下载提取图</a>
+            <button id="retryPersonExtraction" class="secondary-button" type="button">单独提取人物</button>
+            <div id="preparedPersonSubmitPanel" class="prepared-person-submit hidden">
+              <label><span>提交到人像组</span><select id="preparedPersonGroup"><option value="">正在读取人像组…</option></select></label>
+              <label><span>素材名称</span><input id="preparedPersonName" type="text" maxlength="64" placeholder="例如：原片女主角"></label>
+              <label class="prepared-person-consent"><input id="preparedPersonConsent" type="checkbox"><span>我确认拥有该人物素材及用途的合法授权</span></label>
+              <div><button id="refreshPreparedPersonGroups" type="button">刷新人像组</button><button id="submitPreparedPerson" class="primary-button" type="button">提交审核到角色库</button></div>
+              <small id="preparedPersonSubmitStatus">提交后请等待状态变为 Active，再在下方选择该角色。</small>
+            </div>
+          </article>
+        </div>
+        <div id="customReferencePicker" class="custom-reference-picker hidden">
+          <div class="custom-reference-heading"><div><span>随心换参考选择</span><h3>三项均可独立保留原片或上传替换</h3></div><small>最终提交顺序固定为：人物、服装、场景</small></div>
+          <div class="custom-reference-grid">
+            <article class="custom-reference-card">
+              <header><i>人</i><div><b>人物参考</b><small>决定身份、面部、发型与体型</small></div></header>
+              <label class="reference-choice"><input type="radio" name="customPersonChoice" value="original" checked><span>使用原片提取图</span></label>
+              <div id="customPersonOriginalBox" class="custom-original-preview"><img id="customPersonOriginalPreview" alt="原片人物提取预览"><small>完成步骤 03 后显示</small></div>
+              <label class="reference-choice"><input type="radio" name="customPersonChoice" value="upload"><span>使用自己上传的人物图</span></label>
+              <label id="customPersonUploadField" class="image-drop custom-upload"><input id="customPersonImage" type="file" accept="image/*"><b>上传人物图</b><small>选择后可点击预览</small></label>
+            </article>
+            <article class="custom-reference-card">
+              <header><i>衣</i><div><b>服装参考</b><small>决定服装、鞋履与明确配饰</small></div></header>
+              <label class="reference-choice"><input type="radio" name="customClothingChoice" value="original" checked><span>使用原片提取图</span></label>
+              <div id="customClothingOriginalBox" class="custom-original-preview"><img id="customClothingOriginalPreview" alt="原片服装提取预览"><small>完成步骤 03 后显示</small></div>
+              <label class="reference-choice"><input type="radio" name="customClothingChoice" value="upload"><span>使用自己上传的服装图</span></label>
+              <label id="customClothingUploadField" class="image-drop custom-upload"><input id="customClothingImage" type="file" accept="image/*"><b>上传服装图</b><small>选择后可点击预览</small></label>
+            </article>
+            <article class="custom-reference-card">
+              <header><i>景</i><div><b>场景参考</b><small>决定空间、材质与环境光照</small></div></header>
+              <label class="reference-choice"><input type="radio" name="customSceneChoice" value="original" checked><span>使用原片提取图</span></label>
+              <div id="customSceneOriginalBox" class="custom-original-preview"><img id="customSceneOriginalPreview" alt="原片场景提取预览"><small>完成步骤 03 后显示</small></div>
+              <label class="reference-choice"><input type="radio" name="customSceneChoice" value="upload"><span>使用自己上传的场景图</span></label>
+              <label id="customSceneUploadField" class="image-drop custom-upload"><input id="customSceneImage" type="file" accept="image/*"><b>上传场景图</b><small>选择后可点击预览</small></label>
+            </article>
+          </div>
+        </div>
+        <div id="characters" class="character-host">
+          <div class="panel-heading"><div><span>火山角色库</span><h3 id="characterTitle">选择新人物</h3></div><small id="characterNote">只更换人物时，此角色是最终新人物</small></div>
+        </div>
+      </section>
+
+      <section id="generate" class="panel generation-panel">
+        <div class="panel-heading"><div><span>步骤 05</span><h2>Seedance 2.5 成片设置</h2></div><small>白膜作为视频参考，三张图片各自只负责一种视觉信息</small></div>
+        <div class="generation-settings">
+          <label><span>视频模型</span><input id="model" value="Seedance 2.5" readonly></label>
+          <label><span>成片分辨率</span><select id="resolution"><option value="480p">480p · 低成本预览</option><option value="720p" selected>720p · 推荐成片</option></select></label>
+          <label class="audio-setting"><input id="generateAudio" type="checkbox"><span>由 Seedance 生成声音</span></label>
+        </div>
+        <details><summary>查看/补充当前模式提示词</summary><textarea id="prompt" rows="8" maxlength="2600"></textarea></details>
+        <div class="pay-card"><span>预计调用</span><b id="finalCost">1 次 Seedance 2.5 · 720p</b><small>不会重复生成已经完成的白膜与源素材</small></div>
+        <button id="generateBtn" class="primary-button large-action" type="button" disabled>按当前模式生成成片</button>
+        <p id="generateReason" class="button-reason">请先完成白膜与源素材准备。</p>
+      </section>
+
+      <section id="result" class="panel result-panel">
+        <div class="panel-heading"><div><span>步骤 06</span><h2>进度、对比与下载</h2></div><small id="jobState">尚未开始</small></div>
+        <div id="progressArea" class="progress-area hidden"><div><b id="progressPercent">0%</b><span id="progressStage">等待任务</span></div><div class="progress-track"><i id="progressBar"></i></div></div>
+        <pre id="jobLogs" class="job-logs">等待开始…</pre>
+        <button id="recoverWhiteBtn" class="secondary-button recovery-button hidden" type="button">恢复已成功的白膜下载并继续（不重复生成）</button>
+        <div class="compare-grid">
+          <article id="mosaicCard" class="hidden"><header><b>人脸打码视频</b><a id="mosaicDownload" href="#">下载</a></header><video id="mosaicVideo" controls playsinline preload="metadata"></video></article>
+          <article id="whiteCard" class="hidden"><header><b>白膜动作母版</b><a id="whiteDownload" href="#">下载</a></header><video id="whiteVideo" controls playsinline preload="metadata"></video></article>
+          <article id="outputCard" class="hidden"><header><b>最终成片</b><a id="outputDownload" href="#">下载</a></header><video id="outputVideo" controls playsinline preload="metadata"></video></article>
+        </div>
+      </section>
+    </main>
+  </form>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/static/workflow_common.js?v=20260825-1" defer></script>
+  <script src="/static/upload_preview.js?v=20260808-1" defer></script>
+  <script src="/static/character_library.js?v=20260902-1" defer></script>
+  <script src="/static/wardrobe.js?v=20260903-1" defer></script>
+</body>
+</html>
