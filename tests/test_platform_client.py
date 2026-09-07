@@ -207,7 +207,7 @@ class PlatformClientTests(unittest.TestCase):
             with self.subTest(capabilities=public_state):
                 web, core = self.modules()
                 install_platform(web, core, self.transport, public_state)
-                for factory in (web.api_client, web.ark_assets_client, web.performance_analyzer, web.TempFileMediaStore):
+                for factory in (lambda: web.api_client().create_task({"model":"fixture"}), web.ark_assets_client, web.performance_analyzer, web.TempFileMediaStore):
                     with self.assertRaisesRegex(WorkflowError, "平台服务尚未配置就绪"):
                         factory()
                 self.assertFalse(web.ark_assets_configured())
@@ -218,6 +218,17 @@ class PlatformClientTests(unittest.TestCase):
         with self.assertRaises(WorkflowError):
             web.ark_assets_client()
         self.rpc.assert_not_called()
+
+    def test_existing_video_queries_survive_disabled_new_generation_capabilities(self):
+        web, core = self.modules()
+        install_platform(web, core, self.transport, {"ready":False,"capabilities":{}})
+        self.result = {"id":"owned-platform-task","status":"running"}
+        self.assertEqual(web.api_client().get_task("owned-platform-task")["status"],"running")
+        self.assertEqual(self.calls, [("video.get", {"task_id":"owned-platform-task"})])
+        with self.assertRaises(WorkflowError):
+            web.api_client().create_task({"model":"fixture"})
+        self.assertEqual(len(self.calls),1)
+        self.upload.assert_not_called()
 
     def test_invalid_operation_or_response_cannot_fall_back_to_supplier_http(self):
         with self.assertRaises(WorkflowError):

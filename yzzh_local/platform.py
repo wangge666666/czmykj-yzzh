@@ -230,7 +230,10 @@ def install_platform(web, core, transport: PlatformTransport, publiccapabilities
 
     class ReadyTransport:
         def rpc(self, operation, payload):
-            require_ready(operation.partition(".")[0])
+            # Existing video queries remain available when a model/price stops
+            # accepting new work. The server verifies owner and original channel.
+            if operation not in {"video.get", "video.list"}:
+                require_ready(operation.partition(".")[0])
             return transport.rpc(operation, payload)
 
         def upload(self, path):
@@ -240,7 +243,6 @@ def install_platform(web, core, transport: PlatformTransport, publiccapabilities
     selected_transport = ReadyTransport()
 
     def video_client():
-        require_ready()
         return PlatformVideoClient(selected_transport)
 
     def assets_client():
