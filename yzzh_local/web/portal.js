@@ -61,6 +61,46 @@
   const platformMode = () => serviceMode === 'platform';
   const platformFeatures = [['video','视频生成'], ['image','图片生成'], ['analysis','内容分析'], ['assets','角色素材库'], ['media','素材上传']];
   const platformReady = settings => settings?.ready === true && platformFeatures.every(([name]) => settings.capabilities?.[name] === true);
+  function accountExpiry(value) {
+    const date = new Date(value || '');
+    return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('zh-CN', {
+      year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false,
+    }).format(date) : '待确认';
+  }
+  function topNotice(message = '') {
+    const notice = shadow.querySelector('.top-notice');
+    notice.textContent = message; notice.hidden = !message;
+  }
+  function clearTopStatus(message) {
+    shadow.querySelector('.top-account').textContent = '账号待验证';
+    shadow.querySelector('.top-expiry').textContent = '';
+    shadow.querySelector('.top-balance').textContent = '余额待验证';
+    shadow.querySelector('.top-capabilities').replaceChildren();
+    topNotice(message);
+  }
+  function renderTopStatus(current, settings) {
+    shadow.querySelector('.top-status').hidden = !platformMode();
+    button.hidden = platformMode();
+    shadow.querySelector('.top-details').textContent = current ? '账号与服务详情' : '登录账号';
+    shadow.querySelector('.top-account').textContent = current.username;
+    shadow.querySelector('.top-expiry').textContent = current.licensed
+      ? `有效至 ${accountExpiry(current.subscription_end)}` : '时间卡待验证';
+    const balance = settings.balance;
+    shadow.querySelector('.top-balance').textContent = typeof balance === 'number' && Number.isFinite(balance)
+      ? `余额 ¥ ${balance.toFixed(2)}` : '余额暂未获取';
+    const list = shadow.querySelector('.top-capabilities'); list.replaceChildren();
+    for (const [name, label] of platformFeatures) {
+      const item = document.createElement('span');
+      const ready = settings.capabilities?.[name] === true;
+      item.className = 'service-chip' + (ready ? ' is-ready' : ' needs-attention');
+      item.textContent = `${label} · ${ready ? '已就绪' : '待配置'}`; list.append(item);
+    }
+    const missing = platformFeatures.filter(([name]) => settings.capabilities?.[name] !== true).map(([,label]) => label);
+    topNotice(!current.licensed ? '时间卡无效或待验证，请查看账号详情。'
+      : platformReady(settings) ? '' : missing.length
+        ? `${missing.join('、')}待配置，请联系管理员完成服务配置。`
+        : '平台服务待验证，请查看服务详情。');
+  }
   function show(message, view = 'settings') {
     if (!shadow) return;
     panelView = view;
@@ -99,6 +139,7 @@
     for (const [name,,type] of fields) if (type === 'password') settingsForm.elements[name].value = '';
     const badge = document.querySelector('#arkBadge');
     if (badge) {badge.textContent = platformMode() ? '平台服务待验证' : 'API 未配置'; badge.classList.toggle('ready', false);}
+    clearTopStatus(message);
     clearReadiness(message);
   }
   function renderPlatform(settings) {
@@ -130,6 +171,8 @@
     shadow.querySelector('.readiness-status').textContent = message;
     shadow.querySelector('.readiness-checks').replaceChildren();
     shadow.querySelector('.readiness-check').disabled = true;
+    shadow.querySelector('.top-local').textContent = '本地功能待检查';
+    shadow.querySelector('.top-local').classList.toggle('needs-attention', false);
   }
   async function checkReadiness(force = false) {
     if (!readinessKey || readinessPending) return;
@@ -138,11 +181,16 @@
     const action = shadow.querySelector('.readiness-check');
     const text = shadow.querySelector('.readiness-status');
     action.disabled = true; text.textContent = '正在检查本地模型与视频工具…';
+    shadow.querySelector('.top-local').textContent = '正在检查…';
     try {
       const result = await api('/api/plugin-readiness' + (force ? '?recheck=1' : ''));
       if (epoch !== readinessEpoch) return;
       text.textContent = result.message || '自检未完成，请重新检查。';
-      if (result.status === 'incomplete' && !hasAttention) show('本地基础功能尚未就绪，请查看“本地基础自检”中的修复提示。');
+      if (result.status === 'incomplete' && !hasAttention && !platformMode()) show('本地基础功能尚未就绪，请查看“本地基础自检”中的修复提示。');
+      shadow.querySelector('.top-local').textContent = result.ready === true
+        ? '人脸打码 / 深度处理 / 视频工具 · 已就绪'
+        : result.status === 'busy' ? '任务运行中，稍后检查' : '本地功能待检查 · 查看详情';
+      shadow.querySelector('.top-local').classList.toggle('needs-attention', result.ready !== true);
       const list = shadow.querySelector('.readiness-checks'); list.replaceChildren();
       for (const check of result.checks || []) {
         const row = document.createElement('li');
@@ -150,7 +198,11 @@
         list.append(row);
       }
     } catch (e) {
-      if (epoch === readinessEpoch) text.textContent = '本地自检暂时无法完成，请稍后重新检查；仍失败请让 Codex 检查插件连接。';
+      if (epoch === readinessEpoch) {
+        text.textContent = '本地自检暂时无法完成，请稍后重新检查；仍失败请让 Codex 检查插件连接。';
+        shadow.querySelector('.top-local').textContent = '本地自检暂不可用';
+        shadow.querySelector('.top-local').classList.toggle('needs-attention', true);
+      }
     } finally {
       if (epoch === readinessEpoch) {readinessPending = false; action.disabled = false;}
     }
@@ -196,7 +248,9 @@
       const settings = state.settings || {};
       if (settings.mode === 'platform') serviceMode = 'platform';
       else if (current) serviceMode = 'byok';
-      account.textContent = current ? `${current.username} · 产品 4 · ${current.licensed ? '时间卡有效至 ' + current.subscription_end : '无有效时间卡或待重验'}` : '未登录 CZMIYOU';
+      account.textContent = current ? `${current.username} · ${current.licensed ? '时间卡有效至 ' + accountExpiry(current.subscription_end) : '无有效时间卡或待重验'}` : '未登录 CZMIYOU';
+      shadow.querySelector('.top-status').hidden = !platformMode();
+      button.hidden = platformMode();
       shadow.querySelector('.login-destination').textContent = platformMode()
         ? `通过 CZMIYOU 账号中心登录：${new URL(state.health.login_url).origin}`
         : `登录信息只发往：${state.health.login_url}。不要把密码或 Key 发到聊天中。`;
@@ -227,6 +281,7 @@
       syncApiBadge(settings);
       if (platformMode()) {
         renderPlatform(settings);
+        renderTopStatus(current, settings);
       } else {
       for (const [name,,type] of fields) {
         if (type === 'password') settingsForm.elements[name].placeholder = settings.fields?.[name] === true
@@ -243,6 +298,7 @@
       }
       const approvals = await api('/_plugin/approvals');
       hasAttention = !!(approvals.pending.length || approvals.unresolved.length);
+      shadow.querySelector('.top-details').textContent = hasAttention ? '查看待确认操作' : '账号与服务详情';
       const signature = JSON.stringify([serviceMode, approvals.pending.map(item => [item.id, item.state]), approvals.unresolved.map(item => [item.id, item.state, item.diagnosis])]);
       if (signature === attentionSignature) return;
       attentionSignature = signature;
@@ -313,11 +369,14 @@
       }
       if (hasAttention) show('', 'approval');
       else if (panelView === 'approval') {dialog.hidden = true; status.textContent = '';}
-    } catch (e) {status.textContent = e.message;}
+    } catch (e) {
+      status.textContent = e.message;
+      if (platformMode()) {clearTopStatus('状态更新失败，请查看服务详情。'); clearReadiness('状态更新失败，请重新检查。');}
+    }
   }
   document.addEventListener('DOMContentLoaded', () => {
     virtualPortraitLabels();
-    const host = document.createElement('div'); host.id = 'yzzh-plugin-panel'; document.body.append(host);
+    const host = document.createElement('div'); host.id = 'yzzh-plugin-panel'; document.body.prepend(host);
     shadow = host.attachShadow({mode:'open'});
     shadow.innerHTML = `<style>
       :host{font:14px/1.5 system-ui,sans-serif;color:#192332}button,input{font:inherit}button{cursor:pointer;padding:9px 14px;border:1px solid #cbd4e0;border-radius:9px;background:white;color:#182638;margin:5px 5px 5px 0}button:hover{background:#eef3fc}button:disabled{opacity:.5;cursor:wait}
@@ -326,7 +385,24 @@
       h2{font-size:21px;margin:0 0 10px}h3{font-size:16px}p{color:#586578}label{display:block;margin:9px 0}input{display:block;box-sizing:border-box;width:100%;padding:8px;border:1px solid #bcc9d9;border-radius:7px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f5fa;padding:12px;font:12px/1.6 monospace}section{border-top:1px solid #d8e0eb;margin-top:16px;padding-top:12px}.status{color:#944800}a{color:#2753a0}.close{float:right}details{margin:14px 0;border:1px solid #d8e0eb;border-radius:10px;padding:12px}summary{cursor:pointer;font-weight:600}.upload-info{padding:12px;background:#f1f6fc;border-radius:10px}.tos-fields[hidden]{display:none}
       select{display:block;box-sizing:border-box;width:100%;padding:8px;border:1px solid #bcc9d9;border-radius:7px;background:white;color:#192332;font:inherit}
       .asset-consent{display:flex;align-items:flex-start;gap:8px}.asset-consent input{width:18px;flex:none;margin-top:4px;padding:0}
-    </style><button class="entry" type="button">登录并开始创作</button>
+      :host{display:block}[hidden]{display:none!important}
+      .top-status{background:#f1faf5;border-bottom:1px solid #cfe2d7;color:#244c3d;font-size:12px}
+      .top-inner{max-width:1500px;margin:0 auto;padding:10px 28px 12px}
+      .top-account-row,.top-services-row,.service-group{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+      .top-account{font-size:14px;color:#173d32}.top-expiry{color:#61766b}.top-balance{margin-left:auto;font-weight:650;color:#174d37;font-variant-numeric:tabular-nums}
+      .top-details{margin:0 0 0 6px;padding:6px 11px;border-color:#b9d5c5;color:#246044;font-size:12px;background:#fff}
+      .top-services-row{margin-top:9px;gap:8px 20px;font-size:11px}.service-group{gap:8px}.service-group>b{font-weight:600;color:#5a7165}
+      .top-capabilities{display:flex;gap:6px;flex-wrap:wrap}.service-chip{padding:3px 7px;border-radius:5px;background:#e4f2e9;color:#30634a;white-space:nowrap}
+      .needs-attention{color:#9b5b11}.service-chip.needs-attention{background:#fff0d7;color:#96550b}
+      .top-local{color:#30634a}.top-local.needs-attention{color:#9b5b11}
+      .top-notice{margin-top:9px;padding-top:8px;border-top:1px solid #dfdfc7;color:#91500b;font-size:12px}
+      @media(max-width:640px){.top-inner{padding:10px 14px}.top-expiry{font-size:11px}.top-balance{margin-left:0}.top-details{margin-left:auto}.top-services-row{gap:10px}.service-group{align-items:flex-start}.top-capabilities{flex:1}.top-account-row{gap:7px 10px}}
+    </style>
+    <div class="top-status" role="region" aria-label="账号与服务状态" hidden><div class="top-inner">
+      <div class="top-account-row"><strong class="top-account">正在验证账号…</strong><span class="top-expiry"></span><span class="top-balance">余额待验证</span><button class="top-details" type="button">账号与服务详情</button></div>
+      <div class="top-services-row"><div class="service-group"><b>平台</b><div class="top-capabilities"></div></div><div class="service-group"><b>本机</b><span class="top-local">本地功能待检查</span></div></div>
+      <div class="top-notice" role="status" hidden></div>
+    </div></div><button class="entry" type="button">登录并开始创作</button>
     <div class="overlay" hidden><div class="panel" role="dialog" aria-modal="true" aria-label="插件账号与设置">
       <button class="close" type="button">返回创作</button><h2 class="panel-title">账号与创作设置</h2><div class="account"></div>
       <p class="billing-info">沿用原来的创作流程。时间卡控制插件使用权，生成费用由自己的模型账号承担，不扣 CZMIYOU 余额。</p>
@@ -348,8 +424,10 @@
     dialog = shadow.querySelector('.overlay'); status = shadow.querySelector('.status'); account = shadow.querySelector('.account');
     form = shadow.querySelector('.login'); pending = shadow.querySelector('.pending'); settingsForm = shadow.querySelector('.settings');
     configured = shadow.querySelector('.configured'); button = shadow.querySelector('.entry');
+    shadow.querySelector('.top-status').hidden = !platformMode(); button.hidden = platformMode();
     shadow.querySelector('.readiness-check').onclick = () => checkReadiness(true);
     button.onclick = () => {show('', hasAttention ? 'approval' : 'settings'); refresh();}; shadow.querySelector('.close').onclick = () => {dialog.hidden = true;};
+    shadow.querySelector('.top-details').onclick = button.onclick;
     for (const [name,label,type] of fields) {
       const row = document.createElement('label'); row.textContent = label;
       const input = document.createElement('input'); input.name=name; input.type=type; input.autocomplete='off'; row.append(input);

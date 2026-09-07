@@ -51,6 +51,7 @@ function element() {
       }
     },
     replaceChildren(...children) { this.children = children; },
+    prepend(...children) { this.children.unshift(...children); },
   };
 }
 
@@ -63,7 +64,8 @@ async function fixture(options = {}) {
     '.model-fields', '.logout', '.readiness-status', '.readiness-checks', '.readiness-check',
     '.settings-view', '.approval-view', '.panel-title', '.billing-info', '.approval-explanation',
     '.platform-status-view', '.platform-status', '.platform-capabilities', '.platform-balance', '.platform-logout',
-    '.agent-workbench-link']) selectors.set(selector, element());
+    '.agent-workbench-link', '.top-status', '.top-account', '.top-expiry', '.top-balance',
+    '.top-capabilities', '.top-local', '.top-details', '.top-notice']) selectors.set(selector, element());
   const form = selectors.get('.settings');
   form.elements = {MEDIA_UPLOAD_MODE: Object.assign(element(), {name: 'MEDIA_UPLOAD_MODE'})};
   for (const selector of ['.fields', '.identity-fields', '.model-fields', '.tos-fields']) {
@@ -476,7 +478,14 @@ test('a delayed readiness warning cannot replace a pending confirmation with the
 test('all three project pages show a shared platform account panel without requesting personal keys', async () => {
   for (const pathname of ['/projects/wardrobe', '/projects/long-video', '/projects/real-long-video']) {
     const f = await fixture({pathname, initialSettings: platformSettings()});
-    f.selectors.get('.entry').onclick(); await settle();
+    assert.equal(f.selectors.get('.top-status').hidden, false, pathname);
+    assert.equal(f.selectors.get('.entry').hidden, true);
+    assert.equal(f.selectors.get('.top-account').textContent, 'fixture');
+    assert.match(f.selectors.get('.top-expiry').textContent, /2030/);
+    assert.equal(f.selectors.get('.top-balance').textContent, '余额 ¥ 120.50');
+    assert.equal(f.selectors.get('.top-capabilities').children.length, 5);
+    assert.match(f.selectors.get('.top-local').textContent, /已就绪/);
+    f.selectors.get('.top-details').onclick(); await settle();
     assert.equal(f.selectors.get('.entry').textContent, '账号与服务状态', pathname);
     assert.equal(f.selectors.get('.panel-title').textContent, '账号与服务状态');
     assert.equal(f.form.hidden, true);
@@ -505,6 +514,8 @@ test('platform readiness needs every capability and ready to be strictly true', 
       assert.equal(f.badge.classList.contains('ready'), false);
       assert.equal(f.form.hidden, true);
       assert.match(f.selectors.get('.platform-status').textContent, /联系管理员/);
+      assert.equal(f.selectors.get('.top-notice').hidden, false);
+      assert.match(f.selectors.get('.top-notice').textContent, /待配置/);
       assert.doesNotMatch(f.selectors.get('.platform-status').textContent, /填写|Key|密钥/);
       f.assertPreserved();
     }
@@ -534,6 +545,10 @@ test('platform account or session changes clear readiness, balance, approval sta
     assert.equal(f.selectors.get('.platform-status-view').hidden, true);
     assert.equal(f.selectors.get('.platform-balance').textContent, '');
     assert.equal(f.selectors.get('.platform-capabilities').children.length, 0);
+    assert.equal(f.selectors.get('.top-capabilities').children.length, 0);
+    assert.equal(f.selectors.get('.top-account').textContent, '账号待验证');
+    assert.equal(f.selectors.get('.top-balance').textContent, '余额待验证');
+    assert.doesNotMatch(f.selectors.get('.top-local').textContent, /已就绪/);
     assert.equal(f.selectors.get('.pending').children.length, 0);
     assert.equal(f.form.elements.ARK_API_KEY.value, '');
     assert.ok(f.calls.every(call => call.method === 'GET'));
