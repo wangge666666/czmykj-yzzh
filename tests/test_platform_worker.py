@@ -16,6 +16,51 @@ class PlatformWorkerTests(unittest.TestCase):
     login = original.OriginalTests.login
     call = original.OriginalTests.call
 
+    def test_saved_analysis_format_failure_recovers_in_both_workbenches_without_cloud_calls(self):
+        import json
+        self.runtime.mode = "platform"
+        self.runtime.platform = Mock()
+        self.runtime.platform.capabilities.side_effect = lambda *a, **k: copy.deepcopy(platform.capabilities())
+        self.runtime.platform.operation.side_effect = AssertionError("Recovery must not create a provider task")
+        self.runtime.platform.upload.side_effect = AssertionError("Recovery must not upload")
+        self.runtime.settings.load = Mock(side_effect=AssertionError("No BYOK credentials"))
+        server = make_server("127.0.0.1", self.port, self.app, threaded=True, request_handler=original.Quiet)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.login()
+        for page, project, prefix in (
+            ("long-video", "long_video_replacement", "long"),
+            ("real-long-video", "real_person_long_video", "real_long"),
+        ):
+            # Project identifiers come from the current implementation.
+            import web_app
+            project = web_app.REAL_PERSON_LONG_PROJECT if prefix == "real_long" else web_app.VIRTUAL_LONG_PROJECT
+            job_id = prefix + "recoveryfixture"
+            run = self.root / "data/original/71/platform/runs" / ("20260907_100000_web_" + prefix + "_analyze_" + job_id)
+            run.mkdir(parents=True)
+            source = run / "shot.mp4"
+            source.write_bytes(b"synthetic-local-file")
+            manifest = run / ("real_long_manifest.json" if prefix == "real_long" else "long_manifest.json")
+            manifest.write_text(json.dumps({
+                "local_job_id": job_id, "kind": "long_performance", "project": project,
+                "status": "failed", "error": "跨镜人物连续性分析接口没有返回可解析的 JSON。",
+                "shots": [{"index": 1, "start": 0, "end": 1, "duration": 1, "source_path": str(source),
+                           "performance": {"dialogue": [], "performance": [{"actor_slot": 1, "core_intent": "synthetic"}]}}],
+            }))
+            html = self.call("/projects/" + page)
+            self.assertEqual(html.status_code, 200)
+            self.assertIn(b"continuityReviewNotice", html.data)
+            response = self.call("/api/jobs/" + job_id)
+            self.assertEqual(response.status_code, 200, response.data[:300])
+            self.assertEqual(response.json["status"], "succeeded")
+            self.assertTrue(response.json["cast_continuity"]["manual_review_required"])
+            self.assertEqual(len(response.json["shots"]), 1)
+        self.runtime.platform.upload.assert_not_called()
+        self.runtime.platform.operation.assert_not_called()
+        self.runtime.settings.load.assert_not_called()
+        self.assertFalse(self.bridge.pending)
+
     def test_shared_library_metadata_and_read_failure_reach_original_pages_without_credentials(self):
         self.runtime.mode = 'platform'
         self.runtime.platform = Mock()

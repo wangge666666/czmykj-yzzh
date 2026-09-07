@@ -28,7 +28,11 @@ from werkzeug.datastructures import FileStorage
 
 from face_mosaic import render_eye_privacy_image, render_face_mosaic_video
 from performance_analysis import (
+    AnalysisOutputError,
     ArkPerformanceAnalyzer,
+    _json_from_text,
+    _response_text,
+    normalize_cast_continuity,
     build_performance_prompt,
     build_white_model_performance_prompt,
     sanitize_motion_evidence,
@@ -1311,6 +1315,9 @@ def public_long_workspace(record: dict[str, Any], project: str) -> dict[str, Any
         progress = int(job_public.get("progress") or 0)
         shot_count = int(job_public.get("shot_count") or 0)
         has_output = bool(job_public.get("has_output"))
+        needs_review = bool((job_public.get("cast_continuity") or {}).get("manual_review_required")) and any(
+            shot.get("cast_confirmed") is not True for shot in job.shots
+        )
     else:
         snapshot: dict[str, Any] = {}
         manifest_value = str(record.get("manifest_path") or "")
@@ -1330,6 +1337,9 @@ def public_long_workspace(record: dict[str, Any], project: str) -> dict[str, Any
         progress = int(snapshot.get("progress") or 0)
         shot_count = len(snapshot.get("shots") or [])
         has_output = bool(snapshot.get("output"))
+        needs_review = bool((snapshot.get("cast_continuity") or {}).get("manual_review_required")) and any(
+            shot.get("cast_confirmed") is not True for shot in snapshot.get("shots") or []
+        )
     return {
         "id": str(record.get("id") or ""),
         "name": str(record.get("name") or "未命名项目"),
@@ -1339,6 +1349,7 @@ def public_long_workspace(record: dict[str, Any], project: str) -> dict[str, Any
         "progress": max(0, min(100, progress)),
         "shot_count": shot_count,
         "has_output": has_output,
+        "needs_review": needs_review,
         "created_at": str(record.get("created_at") or ""),
         "updated_at": str(record.get("updated_at") or ""),
     }
@@ -2127,6 +2138,7 @@ def _persist_long_job(job: WebJob) -> Path:
         "workspace_id": job.workspace_id,
         "workspace_name": job.workspace_name,
         "status": job.status,
+        "error": job.error,
         "stage": job.stage,
         "progress": job.progress,
         "pause_requested": job.pause_requested,
@@ -2267,26 +2279,21 @@ def restore_latest_long_video_job(
             else {}
         )
         needs_manual_continuity_recovery = bool(
-            project == REAL_PERSON_LONG_PROJECT
+            str(record.get("kind") or "") == "long_performance"
             and str(record.get("status") or "") == "failed"
-            and all(isinstance(shot.get("performance"), dict) for shot in safe_shots)
+            and continuity_output_failure(str(record.get("error") or ""))
+            and bool(safe_shots)
+            and all(has_saved_shot_analysis(shot) for shot in safe_shots)
             and not (restored_continuity.get("assignments") or [])
         )
-        restored_manual_continuity = bool(
-            project == REAL_PERSON_LONG_PROJECT
-            and (
-                restored_continuity.get("manual_review_required") is True
-                or needs_manual_continuity_recovery
-            )
-        )
+        restored_manual_continuity = bool(needs_manual_continuity_recovery or (
+            restored_continuity.get("manual_review_required") is True
+            and (record.get("status") != "failed" or continuity_output_failure(str(record.get("error") or "")))
+        ))
         if needs_manual_continuity_recovery:
-            restored_continuity = {
-                "version": 1,
-                "characters": [],
-                "assignments": [],
-                "manual_review_required": True,
-                "analysis_error": "已恢复的任务完成了逐镜台词与表演分析，但未建立有效的跨镜自动身份。",
-            }
+            restored_continuity = manual_cast_continuity(str(record.get("error") or ""))
+            for shot in safe_shots:
+                shot.update(cast_confirmed=False, status="ready", error="", progress=100)
         job = WebJob(
             id=restored_job_id,
             kind=str(record.get("kind") or "long_analyze"),
@@ -2295,14 +2302,22 @@ def restore_latest_long_video_job(
             workspace_name=str(record.get("workspace_name") or ""),
             run_dir=manifest.parent,
             status=(
-                "paused"
+                "failed"
+                if str(record.get("kind") or "") == "long_performance"
+                and str(record.get("status") or "") == "failed"
+                and not restored_manual_continuity
+                else "paused"
                 if project == REAL_PERSON_LONG_PROJECT and str(record.get("status") or "") == "paused"
                 else "awaiting_approval"
                 if pending_real_composition
                 else "succeeded"
             ),
             stage=(
-                str(record.get("stage") or "真实人物生成已暂停，不会提交后续分镜")
+                str(record.get("stage") or "分析未完成，请查看服务回执")
+                if str(record.get("kind") or "") == "long_performance"
+                and str(record.get("status") or "") == "failed"
+                and not restored_manual_continuity
+                else str(record.get("stage") or "真实人物生成已暂停，不会提交后续分镜")
                 if project == REAL_PERSON_LONG_PROJECT and str(record.get("status") or "") == "paused"
                 else str(record.get("stage") or "等待人工同意继续构图纠偏；后续分镜尚未提交")
                 if pending_real_composition
@@ -2312,7 +2327,11 @@ def restore_latest_long_video_job(
                 if restored_manual_continuity
                 else "已恢复长视频最终成片" if output else "已恢复分镜分析，可继续生成"
             ),
-            progress=(int(record.get("progress") or 0) if pending_real_composition else 100),
+            progress=(int(record.get("progress") or 0) if pending_real_composition or (
+                record.get("kind") == "long_performance" and record.get("status") == "failed"
+                and not restored_manual_continuity
+            ) else 100),
+            error="" if restored_manual_continuity else str(record.get("error") or ""),
             pause_requested=str(record.get("status") or "") == "paused",
             person_path=person,
             clothing_path=clothing,
@@ -2333,6 +2352,9 @@ def restore_latest_long_video_job(
         )
         job.log(f"已恢复 {len(safe_shots)} 个分镜及现有结果。")
         if restored_manual_continuity:
+            counts, ranges = long_continuity_layout(job)
+            if not job.cast_continuity.get("input_signature"):
+                job.cast_continuity["input_signature"] = long_continuity_signature(job, counts, ranges)
             job.log("跨镜自动身份结果不可用；已保留逐镜分析并切换为人工逐镜人物绑定。")
         if interrupted_real_generation:
             job.log(
@@ -9784,6 +9806,7 @@ def cast_continuity_covers_slots(
         for slot in range(1, int(count) + 1)
     }
     actual: set[tuple[int, int]] = set()
+    identities: set[tuple[int, int]] = set()
     for item in continuity.get("assignments") or []:
         if not isinstance(item, dict):
             continue
@@ -9792,9 +9815,97 @@ def cast_continuity_covers_slots(
             character_id = int(item.get("character_id") or 0)
         except (TypeError, ValueError):
             continue
-        if key[0] > 0 and key[1] > 0 and character_id > 0:
-            actual.add(key)
+        if key in actual or (key[0], character_id) in identities or not 1 <= character_id <= 4:
+            return False
+        actual.add(key)
+        identities.add((key[0], character_id))
     return actual == expected
+
+
+def continuity_output_failure(message: str) -> bool:
+    """Recognize only legacy received-output errors, never transport/receipt errors."""
+    return message.startswith((
+        "跨镜人物连续性分析接口没有返回可解析的 JSON",
+        "跨镜人物连续性分析缺少槽位：",
+        "跨镜人物连续性分析结果格式无效",
+        "跨镜人物连续性分析接口返回了非 JSON 响应",
+    ))
+
+
+def manual_cast_continuity(message: str) -> dict[str, Any]:
+    return {"version": 1, "characters": [], "assignments": [],
+            "manual_review_required": True, "analysis_error": message[:500]}
+
+
+def has_saved_shot_analysis(shot: dict[str, Any]) -> bool:
+    analysis = shot.get("performance")
+    return isinstance(analysis, dict) and all(isinstance(analysis.get(key), list) for key in ("dialogue", "performance"))
+
+
+def long_continuity_layout(job: WebJob) -> tuple[dict[int, int], list[dict[str, Any]]]:
+    counts = {
+        int(shot.get("index") or 0): max(0, min(4, max(
+            (int(item.get("actor_slot") or 0)
+             for item in (shot.get("performance") or {}).get("performance") or []
+             if isinstance(item, dict)),
+            default=long_shot_stable_detected_people_count(shot),
+        ))) for shot in job.shots
+    }
+    ranges = [{"index": int(shot.get("index") or 0),
+               "start": float(shot.get("start") or 0), "end": float(shot.get("end") or 0)}
+              for shot in job.shots]
+    return counts, ranges
+
+
+def long_continuity_signature(job: WebJob, counts: dict[int, int], ranges: list[dict[str, Any]]) -> str:
+    # Results belong to this project/run and exact source/shot layout, never an account-global cache.
+    sources = [_reference_fingerprint(str(shot.get("source_path") or "")) for shot in job.shots]
+    payload = [job.project, str(job.run_dir.resolve()), sources, sorted(counts.items()), ranges]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def reusable_long_continuity(job: WebJob, counts: dict[int, int], ranges: list[dict[str, Any]]) -> dict[str, Any] | None:
+    current = job.cast_continuity or {}
+    signature = long_continuity_signature(job, counts, ranges)
+    if current.get("input_signature") not in {None, signature}:
+        return None
+    if cast_continuity_covers_slots(current, counts) or (
+        current.get("manual_review_required") is True and current.get("input_signature") == signature
+    ):
+        return dict(current)
+    receipt = job.run_dir / "cast_continuity_response.json"
+    if receipt.is_file():
+        try:
+            saved = json.loads(receipt.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise WorkflowError("已保存的跨镜分析回执暂时无法读取；不会重新发送分析，请检查本地文件后刷新。")
+        if saved.get("input_signature") == signature:
+            try:
+                raw = _json_from_text(_response_text(saved["response"]), analysis_label="跨镜人物连续性分析")
+                result = normalize_cast_continuity(raw, shot_slot_counts=counts)
+            except AnalysisOutputError as exc:
+                result = manual_cast_continuity(str(exc))
+            return {**result, "input_signature": signature}
+    return None
+
+
+def recover_long_continuity_output(job: WebJob) -> bool:
+    """Upgrade a known old format failure in-place using only already saved local data."""
+    if (job.project not in {VIRTUAL_LONG_PROJECT, REAL_PERSON_LONG_PROJECT}
+            or job.kind != "long_performance" or job.status != "failed"
+            or not continuity_output_failure(job.error)
+            or not job.shots or not all(has_saved_shot_analysis(shot) for shot in job.shots)):
+        return False
+    counts, ranges = long_continuity_layout(job)
+    job.cast_continuity = {**manual_cast_continuity(job.error),
+                           "input_signature": long_continuity_signature(job, counts, ranges)}
+    for shot in job.shots:
+        shot.update(status="ready", stage="台词与表演已保留，待核对人物", progress=100,
+                    error="", cast_confirmed=False)
+    job.log("已恢复全部逐镜台词与表演；请在工作台核对人物对应，不需要重新上传或重复分析。")
+    job.update(status="succeeded", stage="逐镜分析已恢复，人物对应待核对", progress=100, error="")
+    _persist_long_job(job)
+    return True
 
 
 def analyze_long_cast_continuity(
@@ -9806,70 +9917,33 @@ def analyze_long_cast_continuity(
     shot_ranges: list[dict[str, Any]],
     max_characters: int = 4,
 ) -> dict[str, Any]:
-    """Repair/retry real-person continuity output, then safely yield to manual per-shot mapping."""
-    real_person_mode = is_real_person_long_job(job)
-    if real_person_mode and cast_continuity_covers_slots(job.cast_continuity, shot_slot_counts):
-        job.log(
-            "已存在覆盖当前全部分镜槽位的有效跨镜身份结果，直接复用；"
-            "不会因重复点击分析而再次调用方舟或覆盖成功结果。"
+    """Reuse received output; a semantic gap becomes review, never another paid POST."""
+    cached = reusable_long_continuity(job, shot_slot_counts, shot_ranges)
+    if cached is not None:
+        job.log("已直接复用保存的跨镜分析状态，不会重复发送分析。")
+        return cached
+    signature = long_continuity_signature(job, shot_slot_counts, shot_ranges)
+
+    def save_response(response: dict[str, Any]) -> None:
+        save_shot_manifest(job.run_dir / "cast_continuity_response.json", {
+            "version": 1, "input_signature": signature, "response": response,
+        })
+
+    try:
+        result = analyzer.analyze_cast_continuity(
+            video_url, shot_slot_counts=shot_slot_counts, shot_ranges=shot_ranges,
+            max_characters=max_characters, on_response=save_response,
         )
-        return dict(job.cast_continuity)
-    attempts = 3 if real_person_mode else 1
-    expected_slots = "、".join(
-        f"分镜{shot_index:02d}-P{slot}"
-        for shot_index, count in sorted(shot_slot_counts.items())
-        for slot in range(1, count + 1)
-    )
-    retry_instruction = ""
-    last_error: WorkflowError | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            return analyzer.analyze_cast_continuity(
-                video_url,
-                shot_slot_counts=shot_slot_counts,
-                shot_ranges=shot_ranges,
-                max_characters=max_characters,
-                retry_instruction=retry_instruction,
-            )
-        except ArkAPIError as exc:
-            if not real_person_mode:
-                raise
-            last_error = exc
-            job.log(
-                "真实人物跨镜身份分析被方舟接口拒绝；已保留全部逐镜台词与表演结果，"
-                "改用逐镜人工人物绑定，不会提交 Seedance 视频任务。"
-            )
-            break
-        except (ArkConnectionError, WorkflowError) as exc:
-            if not real_person_mode:
-                raise
-            last_error = exc
-            if attempt >= attempts:
-                break
-            failure_kind = "连接中断" if isinstance(exc, ArkConnectionError) else "JSON格式或槽位完整性校验失败"
-            job.log(
-                f"真实人物跨镜身份分析{failure_kind}：{str(exc)[:300]}。正在自动纠错重试 "
-                f"{attempt}/{attempts - 1}；逐镜分析结果会直接复用，不会提交 Seedance 视频任务。"
-            )
-            retry_instruction = (
-                f"上一次结果失败：{str(exc)[:300]}。本次只输出一个合法JSON对象；"
-                f"assignments必须恰好覆盖以下所有槽位且不得重复或遗漏：{expected_slots}。"
-            )
-            time.sleep(float(attempt))
-    if real_person_mode:
-        message = str(last_error or "跨镜人物连续性分析未返回结果")[:500]
-        job.log(
-            "真实人物跨镜身份自动分析连续失败，已自动降级为逐镜人工人物绑定；"
-            "现有台词、表演、打码和分镜数据全部保留，任务可继续。"
-        )
-        return {
-            "version": 1,
-            "characters": [],
-            "assignments": [],
-            "manual_review_required": True,
-            "analysis_error": message,
-        }
-    raise last_error or WorkflowError("跨镜人物连续性分析未返回结果。")
+    except AnalysisOutputError as exc:
+        result = manual_cast_continuity(str(exc))
+        job.log("跨镜人物对应尚不完整；逐镜台词与表演已保存，进入逐镜人工人物绑定，不会自动重发分析。")
+        for shot in job.shots:
+            shot["cast_confirmed"] = False
+    # API rejection, uncertain POST, permissions and disk errors remain explicit failures.
+    result = {**result, "input_signature": signature}
+    job.cast_continuity = result
+    _persist_long_job(job)
+    return result
 
 
 REAL_LONG_INLINE_ANALYSIS_MAX_BYTES = 32 * 1024 * 1024
@@ -9926,7 +10000,7 @@ def run_long_performance_analysis(job: WebJob) -> None:
                         performance=existing,
                         performance_path=str(output),
                         stage="已复用台词与表演分析",
-                        progress=100,
+                        status="ready", error="", progress=100,
                     )
                     continue
             job.update(
@@ -9968,51 +10042,27 @@ def run_long_performance_analysis(job: WebJob) -> None:
             _persist_long_job(job)
 
         job.update(stage="正在建立跨镜人物稳定身份", progress=97)
-        slot_counts = {
-            int(shot.get("index") or 0): max(
-                0,
-                min(
-                    4,
-                    max(
-                        (int(item.get("actor_slot") or 0) for item in (shot.get("performance") or {}).get("performance") or [] if isinstance(item, dict)),
-                        default=long_shot_stable_detected_people_count(shot),
-                    ),
-                ),
-            )
-            for shot in job.shots
-        }
-        reference = _run_artifact(job.run_dir, "reference", {".mp4", ".mov", ".mkv", ".webm"})
-        if reference is None:
-            raise WorkflowError("找不到长视频原片，无法建立跨镜人物身份。")
-        uploaded_id = ""
-        try:
-            video_reference, uploaded_id = long_performance_video_reference(job, reference, store)
-            if is_real_person_long_job(job):
-                job.log(
-                    "真实人物项目的跨镜分析已改用方舟内嵌视频输入，"
-                    "不再依赖可能失效的免费临时公网地址；虚拟人物项目流程保持不变。"
+        slot_counts, shot_ranges = long_continuity_layout(job)
+        continuity = reusable_long_continuity(job, slot_counts, shot_ranges)
+        if continuity is None:
+            reference = _run_artifact(job.run_dir, "reference", {".mp4", ".mov", ".mkv", ".webm"})
+            if reference is None:
+                raise WorkflowError("找不到长视频原片，无法建立跨镜人物身份。")
+            uploaded_id = ""
+            try:
+                video_reference, uploaded_id = long_performance_video_reference(job, reference, store)
+                continuity = analyze_long_cast_continuity(
+                    job, analyzer, video_reference, shot_slot_counts=slot_counts,
+                    shot_ranges=shot_ranges, max_characters=4,
                 )
-            continuity = analyze_long_cast_continuity(
-                job,
-                analyzer,
-                video_reference,
-                shot_slot_counts=slot_counts,
-                shot_ranges=[
-                    {
-                        "index": int(shot.get("index") or 0),
-                        "start": float(shot.get("start") or 0),
-                        "end": float(shot.get("end") or 0),
-                    }
-                    for shot in job.shots
-                ],
-                max_characters=4,
-            )
-        finally:
-            if uploaded_id:
-                try:
-                    store.delete(uploaded_id)
-                except Exception as exc:
-                    job.log(f"跨镜身份临时视频将在 1 小时后自动过期：{exc}")
+            finally:
+                if uploaded_id:
+                    try:
+                        store.delete(uploaded_id)
+                    except Exception as exc:
+                        job.log(f"跨镜身份临时视频将在 1 小时后自动过期：{exc}")
+        else:
+            job.log("已复用跨镜分析状态，没有重新上传原片或发送分析。")
         job.cast_continuity = continuity
         for shot in job.shots:
             apply_cast_continuity_to_shot(job, shot)
@@ -11721,6 +11771,7 @@ def delete_real_long_actor_character_asset(actor_index: int):
 def analyze_long_video_performance_job():
     try:
         job = _long_job_from_form()
+        recover_long_continuity_output(job)
         if not form_bool("performance_consent"):
             raise WorkflowError("请确认将原片分镜临时上传至火山方舟进行台词与表演分析。")
         job.update(kind="long_performance", status="queued", stage="等待台词与表演分析", progress=0, error="")
@@ -12680,6 +12731,7 @@ def job_status(job_id: str):
             restore_wardrobe_output_link(job, wardrobe_mode_from_job(job))
             reconcile_wardrobe_white_task_state(job)
             persist_wardrobe_swap_job(job, wardrobe_mode_from_job(job))
+        recover_long_continuity_output(job)
         return jsonify(job.public())
     except Exception as exc:
         return jsonify({"error": str(exc)}), 404

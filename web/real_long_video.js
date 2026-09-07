@@ -920,6 +920,11 @@ function applyAutomaticCastSuggestions() {
       continue;
     }
     const detected = detectedPeopleCount(shot);
+    if (state.lastJob?.cast_continuity?.manual_review_required === true) {
+      // Missing identities must be reviewed, not silently assigned by screen order.
+      state.shotCasts.set(index, Array.from({ length: detected }, () => 0));
+      continue;
+    }
     const suggested = Math.min(state.actorCount, Math.max(0, detected));
     state.shotCasts.set(index, Array.from({ length: suggested }, (_value, offset) => offset + 1));
   }
@@ -932,6 +937,7 @@ function actorRole(index) {
 }
 
 function routeText(actorIds) {
+  if (actorIds.some((id) => !id)) return "待核对：请为每个原片人物选择对应的新人物";
   if (!actorIds.length) return "无人镜头：使用深度视频和新场景板进行场景重绘";
   if (actorIds.length === 1) return `单人路由：使用人物 ${actorIds[0]}，调用项目1生成流程`;
   return `多人路由：使用人物 ${actorIds.join("、")}，调用项目2多人生成流程`;
@@ -1034,7 +1040,7 @@ function shotCard(shot, job) {
     const confidence = hasSemanticSlot
       ? " · 来自台词表演分析"
       : detected.confidence ? ` · 检测置信度${Math.round(Number(detected.confidence) * 100)}%` : " · 人工添加";
-    const options = Array.from({ length: state.actorCount }, (_value, actorOffset) => actorOffset + 1).map((optionId) =>
+    const options = `<option value="0" ${!actorId ? "selected" : ""}>请选择对应人物</option>` + Array.from({ length: state.actorCount }, (_value, actorOffset) => actorOffset + 1).map((optionId) =>
       `<option value="${optionId}" ${optionId === actorId ? "selected" : ""}>人物${optionId} · ${escapeHtml(actorRole(optionId))}</option>`
     ).join("");
     const continuityNote = characterId ? " · C身份仅供自动建议，人工选择只作用于本镜" : "";
@@ -1342,7 +1348,12 @@ function updatePipelineButtons() {
   if (privacyReview && !mosaicsReady) privacyReview.checked = false;
   if (privacyReview) privacyReview.disabled = running || !mosaicsReady;
   if ($("#mosaicBtn")) $("#mosaicBtn").disabled = !shots.length || running;
-  if ($("#performanceBtn")) $("#performanceBtn").disabled = !shots.length || running || !$("#performanceConsent").checked;
+  const needsCastReview = state.lastJob?.cast_continuity?.manual_review_required === true;
+  if ($("#performanceBtn")) {
+    $("#performanceBtn").disabled = !shots.length || running || (!needsCastReview && !$("#performanceConsent").checked);
+    $("#performanceBtn").dataset.localReview = String(needsCastReview);
+    $("#performanceBtn").textContent = needsCastReview ? "核对人物对应" : "分析全部分镜的台词与表演";
+  }
   const mosaicHint = $("#mosaicStatusHint");
   if (mosaicHint) {
     mosaicHint.classList.toggle("ready", mosaicsReady);
@@ -1619,7 +1630,17 @@ async function prepareMosaic() {
   } catch (error) { setBusy(false); toast(error.message, true); }
 }
 
+function openCastReview() {
+  showWorkflowStep("progress");
+  $("#shotGrid").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#shotGrid [data-person-mapping]")?.focus({ preventScroll: true });
+}
+
 async function analyzePerformance() {
+  if (state.lastJob?.cast_continuity?.manual_review_required === true) {
+    openCastReview();
+    return;
+  }
   try {
     if (!state.jobId || !state.shotCount) throw new Error("请先完成分镜分析。");
     if (!$("#performanceConsent").checked) throw new Error("请先确认临时上传原片分镜用于分析。");
@@ -2041,6 +2062,9 @@ function render(job, analysisOnly = false) {
   renderShotGrid();
   $("#castConfirmBar").classList.toggle("hidden", !state.shotCount);
   $("#confirmCast").checked = state.castConfirmed;
+  $("#continuityReviewNotice").classList.toggle("hidden", job.cast_continuity?.manual_review_required !== true);
+  $("#continuityReviewDetail").textContent = "台词、表演和打码结果已保留。自动分析未能确定全部人物对应，请逐镜选择人物；只核对本地结果，不会再次上传或收费。";
+
   if (state.shotCount) {
     const manualContinuity = job.cast_continuity?.manual_review_required === true;
     $("#analysisState").textContent = manualContinuity
@@ -2129,7 +2153,10 @@ function monitor(id, mode, { scroll = true } = {}) {
             updateCostAndButton();
           }
           const manualContinuity = job.cast_continuity?.manual_review_required === true;
-          toast((mode === true || mode === "analysis")
+          if (manualContinuity && mode === "performance") {
+            toast("台词与表演已保存，请点击“核对人物对应”继续。");
+            $("#continuityReviewNotice").scrollIntoView({ behavior: "smooth", block: "center" });
+          } else toast((mode === true || mode === "analysis")
             ? manualContinuity
               ? `逐镜台词与表演已完成；跨镜自动身份失败，请逐镜人工选择人物后继续。`
               : `分镜与人数分析完成：${job.shot_count}个，请逐镜核对角色。`
@@ -2326,6 +2353,12 @@ $("#shotGrid").addEventListener("click", (event) => {
 });
 
 $("#confirmCast").addEventListener("change", () => {
+  if ($("#confirmCast").checked && [...state.shotCasts.values()].some((ids) => ids.some((id) => !id))) {
+    $("#confirmCast").checked = false;
+    state.castConfirmed = false;
+    updateCostAndButton();
+    return toast("仍有人物尚未选择，请先逐镜核对人物对应。", true);
+  }
   if ($("#confirmCast").checked && generationStrategy() !== WHOLE_GENERATION_STRATEGY && !sceneMappingsComplete()) {
     $("#confirmCast").checked = false;
     state.castConfirmed = false;
@@ -2691,6 +2724,7 @@ $("#pauseGenerateBtn").addEventListener("click", pauseGeneration);
 $("#regenerateAllBtn").addEventListener("click", regenerateAll);
 $("#mosaicBtn").addEventListener("click", prepareMosaic);
 $("#performanceBtn").addEventListener("click", analyzePerformance);
+$("#continuityReviewLink").addEventListener("click", (event) => { event.preventDefault(); openCastReview(); });
 $("#whiteModelBtn").addEventListener("click", generateWhiteModel);
 $("#performanceConsent").addEventListener("change", updatePipelineButtons);
 $("#privacyReviewConfirmed").addEventListener("change", updatePipelineButtons);

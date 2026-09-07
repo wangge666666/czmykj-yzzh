@@ -53,6 +53,7 @@
             <span class="stage-chip cloud">ARK · 需确认</span><h3>② 台词与表演神色</h3><p>逐镜提取原台词、说话人、语气、时间点，以及整体情绪、眼神、表情和姿态证据。</p>
             <label class="consent-row"><input id="performanceConsent" type="checkbox"><span>我同意临时上传原片分镜用于多模态分析</span></label>
             <button id="performanceBtn" class="secondary-button" type="button" disabled>分析全部分镜的台词与表演</button>
+            <div id="continuityReviewNotice" class="notice hidden" role="status"><b>台词与表演已保存，人物对应待核对</b><span id="continuityReviewDetail"></span><a id="continuityReviewLink" href="#progress" class="text-button">前往逐镜人物核对 ↓</a></div>
           </article>
           <article class="redraw-stage-card white-stage-card">
             <span class="stage-chip paid">SEEDANCE 2.0 · 480P · 按镜计费</span><h3>③ 白模绿幕动作母版</h3><p>无需上传白模参考。固定使用480p低成本规格，只参考打码分镜的动作与运镜。</p>
@@ -119,8 +120,8 @@
   </main>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/project_registry.js?v=20260823-2" defer></script>
-  <script src="/static/workflow_common.js?v=20260824-3" defer></script>
+  <script src="/static/workflow_common.js?v=20260907-analysis-recovery-1" defer></script>
   <script src="/static/upload_preview.js?v=20260808-1" defer></script>
-  <script src="/static/long_video.js?v=20260814-06&amp;workspaces=1" defer></script>
+  <script src="/static/long_video.js?v=20260907-analysis-recovery-1" defer></script>
 </body>
 </html>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -761,6 +761,7 @@ class ArkPerformanceAnalyzer:
         shot_ranges: list[dict[str, Any]],
         max_characters: int = 4,
         retry_instruction: str = "",
+        on_response: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         timeline = "\n".join(
             f"分镜{int(item['index']):02d}：全片 {float(item['start']):.3f}–{float(item['end']):.3f} 秒，"
@@ -810,6 +811,16 @@ class ArkPerformanceAnalyzer:
             payload = response.json()
         except ValueError as exc:
             raise AnalysisOutputError("跨镜人物连续性分析接口返回了非 JSON 响应。") from exc
+        if on_response:
+            # Persist only received output, never headers, input URLs or credentials.
+            snapshot: dict[str, Any] = {}
+            if isinstance(payload, dict):
+                snapshot["status"] = str(payload.get("status") or "")
+                try:
+                    snapshot["output_text"] = _response_text({**payload, "status": "completed"})
+                except AnalysisOutputError:
+                    snapshot["output_text"] = ""
+            on_response(snapshot)
         raw = _json_from_text(
             _response_text(payload),
             analysis_label="跨镜人物连续性分析",

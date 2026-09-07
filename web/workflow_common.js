@@ -163,6 +163,10 @@
       const button = document.getElementById(buttonId);
       if (!button) continue;
       let note = button.parentElement?.querySelector(`:scope > .paid-action-meta[data-for="${buttonId}"]`);
+      if (button.dataset.localReview === "true") {
+        if (note) note.remove();
+        continue;
+      }
       if (!note) {
         note = document.createElement("small");
         note.className = "paid-action-meta";
@@ -219,6 +223,7 @@
       if (updateHash) history.replaceState(null, "", `#${selected.id}`);
       window.scrollTo({ top: Math.max(0, shell.offsetTop - 12), behavior: "smooth" });
     }
+    window.DepthFlowUI.showStep = showStep;
     nav.addEventListener("click", (event) => {
       const button = event.target.closest("[data-workflow-step]");
       if (button) showStep(button.dataset.workflowStep);
@@ -261,7 +266,7 @@
       manager.querySelector("[data-workspace-summary]").textContent = `${workspaceContext.items.length} 个项目${running ? ` · ${running} 个运行中` : ""}`;
       manager.querySelector("[data-workspace-list]").innerHTML = workspaceContext.items.map((item) => {
         const detail = item.job_id
-          ? `${statusLabel(item.status)} · ${Number(item.shot_count || 0)}镜 · ${Number(item.progress || 0)}%`
+          ? `${item.needs_review ? "人物待核对" : statusLabel(item.status)} · ${Number(item.shot_count || 0)}镜 · ${Number(item.progress || 0)}%`
           : "未上传原片";
         return `<button type="button" class="long-workspace-item${item.id === workspaceContext.activeId ? " active" : ""}" data-workspace-select="${escapeMarkup(item.id)}"><i class="workspace-status ${escapeMarkup(item.status || "new")}"></i><span><b>${escapeMarkup(item.name)}</b><small>${escapeMarkup(detail)}</small></span></button>`;
       }).join("");
