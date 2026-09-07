@@ -176,3 +176,52 @@ class WorkerPlatformCallbacks:
         finally:
             if network_id:
                 self.guard.callback("finish", id=network_id, ok=ok, task_id=task_id)
+
+
+def reconcile_request(bridge, data):
+    """Query a durable platform receipt; never upload or submit a generation."""
+    if not isinstance(data, dict) or not re.fullmatch(r"[a-f0-9]{32}", str(data.get("id", ""))):
+        raise HybridError("INVALID_PLATFORM_REQUEST")
+    rt = bridge.runtime
+    with rt.lock:
+        if rt.mode != "platform":
+            raise HybridError("PLATFORM_MODE_REQUIRED", 409)
+        owner, _, _ = bridge.context(data.get("owner"), data.get("session"))
+        item = next((value for value in bridge.unresolved(owner) if value["id"] == data["id"]), None)
+        if not item or item.get("service_mode") != "platform" or item.get("owner") != owner:
+            raise HybridError("PLATFORM_RECEIPT_NOT_FOUND", 404)
+        active = bridge.pending.get(item["id"])
+        if active and active["state"] == "sending":
+            raise HybridError("PLATFORM_REQUEST_STILL_RUNNING", 409)
+        expected_operation = item.get("summary", {}).get("operation")
+        if expected_operation not in WRITE_OPERATIONS:
+            raise HybridError("INVALID_PLATFORM_REQUEST")
+        token, session = rt.token, rt.session_revision
+        request_id = hashlib.sha256(item["id"].encode()).hexdigest()
+    response = rt.platform.receipt(token, request_id)
+    receipt = response.get("result") if isinstance(response, dict) else None
+    if (not isinstance(receipt, dict) or receipt.get("request_id") != request_id
+            or receipt.get("operation") != expected_operation):
+        raise HybridError("PLATFORM_INVALID_RESPONSE", 502)
+    state = receipt.get("state")
+    task_id = receipt.get("task_id", "")
+    confirmed = state in {"succeeded", "failed"} or (state == "running" and expected_operation == "video.create")
+    if expected_operation == "video.create" and state != "failed":
+        confirmed = confirmed and isinstance(task_id, str) and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", task_id))
+    with rt.lock:
+        bridge.context(owner, session)
+        if confirmed:
+            item["state_before_reconciliation"] = item["state"]
+            item["state"] = "rejected" if state == "failed" else "completed"
+            item["receipt"] = {"state": state, "checked_at": time.time()}
+            if expected_operation == "video.create" and isinstance(task_id, str):
+                item["task_id"] = task_id
+            bridge._record(item)
+            if item["id"] in bridge.pending:
+                bridge.pending[item["id"]].update(item)
+    message = ("平台已确认原请求被拒绝，记录已保留；没有重新发送。" if state == "failed" else
+               "平台已确认原视频任务，请使用原页面的恢复/查询功能继续取回；没有重新生成。" if confirmed and expected_operation == "video.create" else
+               "平台已确认原请求完成，记录已保留。请先核对已有结果；没有重新上传或生成。" if confirmed else
+               "平台尚未确认该请求的最终回执，已保留记录并继续暂停新请求；没有重新发送。")
+    return {"confirmed": confirmed, "state": state if isinstance(state, str) else "unknown",
+            "task_id": task_id if confirmed and expected_operation == "video.create" else "", "message": message}

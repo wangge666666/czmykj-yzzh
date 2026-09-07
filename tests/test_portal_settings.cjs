@@ -138,6 +138,11 @@ async function fixture(options = {}) {
       approvals.pending.splice(index, 1);
       return response(200, {ok: true});
     }
+    if (url.pathname === '/_plugin/reconcile' && method === 'POST') {
+      if (options.receiptError) return response(404, {error: 'REQUEST_NOT_FOUND'});
+      approvals.unresolved.splice(0);
+      return response(200, {confirmed:true, task_id:'original-platform-task', message:'平台已确认原视频任务，没有重新生成。'});
+    }
     if (url.pathname === '/api/plugin-readiness' && method === 'GET') {
       const result = options.readiness || {ready: true, status: 'ready', checks: [], message: '人脸打码、深度处理、视频工具已就绪。'};
       if (options.pauseReadiness) return new Promise(resolve => {
@@ -196,7 +201,7 @@ async function fixture(options = {}) {
       assert.equal(page.get('#modeInput').value, 'clothing');
       assert.deepEqual(navigations, expectedNavigations);
       assert.ok(calls.every(call => call.origin === location.origin &&
-        ['/api/state', '/api/settings', '/api/logout', '/_plugin/approvals', '/_plugin/decision', '/api/plugin-readiness'].includes(call.path)));
+        ['/api/state', '/api/settings', '/api/logout', '/_plugin/approvals', '/_plugin/decision', '/_plugin/reconcile', '/api/plugin-readiness'].includes(call.path)));
     },
   };
 }
@@ -663,5 +668,33 @@ test('explicit BYOK mode preserves the existing owner namespace and leaves platf
   f.storage.removeItem('depthflowLongDraft');
   assert.equal(f.storage.getItem('depthflowLongDraft'), null);
   assert.equal(f.storage.values.get('yzzh.71.platform.depthflowLongDraft'), 'preserved-platform-draft');
+  f.assertPreserved();
+});
+
+
+test('platform receipt is queried only by explicit click and never approves or resubmits a task', async () => {
+  const f = await fixture({initialSettings:platformSettings(), approvals:{pending:[],unresolved:[
+    {id:'synthetic-original-request',state:'uncertain',service_mode:'platform'}]}});
+  assert.ok(f.calls.every(call => call.method === 'GET'));
+  const button = f.selectors.get('.pending').children.find(child => child.textContent === '查询原请求');
+  assert.ok(button);
+  await button.onclick();
+  const writes = f.calls.filter(call => call.method === 'POST');
+  assert.equal(writes.length,1);
+  assert.equal(writes[0].path,'/_plugin/reconcile');
+  assert.deepEqual(JSON.parse(writes[0].body),{owner:71,session:'fixture-context',id:'synthetic-original-request'});
+  assert.match(f.selectors.get('.status').textContent,/original-platform-task/);
+  f.assertPreserved();
+});
+
+test('a missing platform receipt leaves the original request visible and does not retry automatically', async () => {
+  const f = await fixture({initialSettings:platformSettings(),receiptError:true, approvals:{pending:[],unresolved:[
+    {id:'synthetic-missing-request',state:'uncertain',service_mode:'platform'}]}});
+  const button = f.selectors.get('.pending').children.find(child => child.textContent === '查询原请求');
+  await button.onclick();
+  await f.refresh();
+  assert.equal(f.calls.filter(call => call.method === 'POST').length,1);
+  assert.match(f.selectors.get('.pending').children[0].textContent,/synthetic-missing-request/);
+  assert.equal(button.disabled,false);
   f.assertPreserved();
 });

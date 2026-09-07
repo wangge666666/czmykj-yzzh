@@ -384,6 +384,11 @@ def install_original(app, runtime, port):
     def approvals():
         return jsonify(bridge.approvals(request.headers.get("X-Yzzh-Owner"), request.headers.get("X-Yzzh-Context")))
 
+    @app.post("/_plugin/reconcile")
+    def reconcile():
+        from .platform_bridge import reconcile_request
+        return jsonify(reconcile_request(bridge, request.get_json()))
+
     @app.post("/_plugin/decision")
     def decision():
         return jsonify(bridge.decide(request.get_json()))

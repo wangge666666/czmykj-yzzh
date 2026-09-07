@@ -33,6 +33,9 @@
     return response;
   };
   const messages = {
+    REQUEST_NOT_FOUND:'平台暂未查到该请求，尚不能确定未受理；记录已保留，请稍后查询。',
+    PLATFORM_REQUEST_STILL_RUNNING:'原请求仍在执行，请等待返回后再查询回执。',
+    PLATFORM_SERVICE_UNAVAILABLE:'平台服务暂时不可用，请稍后查询原请求；不会重新发送。',
     INVALID_LOGIN:'请填写账号、密码，并选择登录身份。',
     INVALID_LOGIN_ROLE:'请选择你在 CZMIYOU 账号中心使用的登录身份。',
     LOGIN_CREDENTIALS_INVALID:'账号或密码不正确，请核对后重新输入。',
@@ -251,6 +254,20 @@
           : platformMode() ? `请求 ${item.id} 状态未确认。请核对平台任务记录和账单；不会自动重发。`
           : `请求 ${item.id} 状态未确认。请核对供应商控制台；不会自动重发。`;
         pending.append(text);
+        if (platformMode() && item.service_mode === 'platform') {
+          const query = document.createElement('button'); query.textContent = '查询原请求';
+          query.onclick = async () => {
+            if (query.disabled) return;
+            query.disabled = true;
+            try {
+              const receipt = await api('/_plugin/reconcile', {owner:Number(owner), session:context, id:item.id});
+              await refresh();
+              show(receipt.message + (receipt.task_id ? ` 原任务：${receipt.task_id}` : ''), 'approval');
+            } catch (e) {show(e.message, 'approval');}
+            finally {query.disabled = false;}
+          };
+          pending.append(query);
+        }
       }
       for (const item of approvals.pending) {
         const section = document.createElement('section');
