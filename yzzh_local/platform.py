@@ -163,6 +163,17 @@ class PlatformAssetsClient(ArkAssetsClient):
         self.transport = transport
         self.project_name = str(project_name or "default").strip() or "default"
 
+    def list_assets(self, *, group_type, group_ids=None, statuses=None, page_size=100):
+        groups = list(dict.fromkeys(group_ids or []))
+        if len(groups) <= 100:
+            return super().list_assets(group_type=group_type, group_ids=groups, statuses=statuses, page_size=page_size)
+        assets = {}
+        for start in range(0, len(groups), 100):
+            rows = super().list_assets(group_type=group_type, group_ids=groups[start:start + 100], statuses=statuses, page_size=page_size)
+            for row in rows:
+                assets[row['Id']] = row
+        return list(assets.values())
+
     def call(self, action: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         if action not in ASSET_ACTIONS:
             raise WorkflowError("此平台素材库操作尚未支持，未发送请求。")

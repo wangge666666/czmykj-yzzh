@@ -4,6 +4,9 @@ import unittest
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import Mock
+from unittest.mock import patch
+from concurrent.futures import ThreadPoolExecutor
+import tempfile
 from workflow_core import WorkflowError
 from yzzh_local.platform import PlatformAssetsClient, PlatformTransport, install_platform, platform_library_status
 from tests.test_platform_client import capabilities
@@ -32,6 +35,23 @@ class PlatformLibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowError, '管理员部署共享角色库更新'):
             client.list_asset_groups(group_type='AIGC')
         self.assertEqual(len(self.calls), 1)
+
+    def test_more_than_100_groups_are_split_to_the_existing_server_contract(self):
+        client = self.client(lambda _, p: {'Result': {'Items': [{'Id': 'asset-' + p['Filter']['GroupIds'][0]}],
+            'TotalCount': 1, 'LibrarySource': 'canvas-shared-v1'}})
+        groups = [f'group-fixture{i}' for i in range(245)]
+        self.assertEqual(len(client.list_assets(group_type='AIGC', group_ids=groups)), 3)
+        self.assertEqual([len(p['Filter']['GroupIds']) for _, p in self.calls], [100, 100, 45])
+
+    def test_parallel_refreshes_write_complete_cache_without_shared_temporary_files(self):
+        import web_app
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)/'library.json'
+            with patch.object(web_app, 'REAL_CHARACTER_LIBRARY_CACHE_PATH', target):
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    list(pool.map(lambda i: web_app._write_real_character_library_cache({'groups':[{'id':str(i)}], 'assets':[]}), range(40)))
+                self.assertEqual(len(web_app._read_real_character_library_cache()['groups']), 1)
+                self.assertEqual(list(Path(directory).glob('*.tmp')), [])
 
     def test_filtered_empty_page_does_not_hide_later_assets(self):
         client = self.client(lambda _, p: {'Result': {'Items': [] if p['PageNumber'] == 1 else [{'Id': 'asset-found'}],

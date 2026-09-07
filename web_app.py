@@ -50,6 +50,7 @@ from long_video_core import (
 )
 
 from workflow_core import (
+    atomic_write_text,
     DEFAULT_ARK_BASE_URL,
     DEFAULT_PROMPT,
     DEFAULT_SEEDREAM_MODEL,
@@ -7050,9 +7051,7 @@ def _write_real_character_library_cache(payload: dict[str, Any]) -> None:
         "project_name": str(payload.get("project_name") or ark_assets_project_name()),
         "cached_at": datetime.now().isoformat(timespec="seconds"),
     }
-    temporary = REAL_CHARACTER_LIBRARY_CACHE_PATH.with_suffix(".tmp")
-    temporary.write_text(json.dumps(cached, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(REAL_CHARACTER_LIBRARY_CACHE_PATH)
+    atomic_write_text(REAL_CHARACTER_LIBRARY_CACHE_PATH, json.dumps(cached, ensure_ascii=False, indent=2))
 
 
 def _load_ark_character_library() -> dict[str, Any]:
