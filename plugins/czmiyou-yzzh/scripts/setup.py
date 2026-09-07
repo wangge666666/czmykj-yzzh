@@ -1,6 +1,8 @@
 """Install the private environment and verify the two required local models."""
 import argparse
 import ast
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -89,12 +91,50 @@ def install_models(root):
           ("; existing file reused." if depth_reused else "."))
 
 
+def verify_installation(root):
+    """Check installed payloads, both host manifests and local execution without network."""
+    root = Path(root).resolve()
+    runtime = root / "runtime"
+    (root / "installation-check.json").write_text('{"local_ready": false, "status": "checking"}\n', encoding="utf-8")
+    inventory = json.loads((root / "SHA256SUMS.json").read_text())
+    for relative, expected in inventory.items():
+        path = (root / relative).resolve()
+        path.relative_to(root)
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise RuntimeError("Installed file is missing or outdated: " + relative)
+    for filename in (".codex-plugin/plugin.json", ".workbuddy-plugin/plugin.json", ".mcp.json", "workbuddy.mcp.json"):
+        if not isinstance(json.loads((root / filename).read_text()), dict):
+            raise RuntimeError("Invalid host configuration: " + filename)
+    for filename in ("projects.html", "wardrobe.html", "long_video.html", "real_long_video.html"):
+        if not (runtime / "web" / filename).is_file():
+            raise RuntimeError("Missing project page: " + filename)
+    sys.path.insert(0, str(runtime))
+    import workflow_core as core
+    import face_mosaic as face
+    from yzzh_local.original_worker import local_readiness
+    result = local_readiness(core, face, {}, force=True)
+    if result.get("ready") is not True:
+        raise RuntimeError("Local verification failed: " + str(result.get("message") or "check model and video tools"))
+    report = {"local_ready": True, "projects": ["wardrobe", "virtual", "real"],
+              "host_packages": ["Codex", "WorkBuddy"], "checks": result.get("checks", []),
+              "account_and_platform": "requires_login_and_service_check", "paid_generation_tested": False}
+    (root / "installation-check.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("Installation verified: payload hashes, Codex/WorkBuddy packages, three project pages, models and FFmpeg.")
+    print("Login next to verify platform services and company roles. No uploads or paid generation were used.")
+
+
+def install_and_verify(root):
+    install_models(root)
+    verify_installation(root)
+
+
 def main(argv=None, *, root=None):
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--models", action="store_true", help="Compatibility option: required models are installed by default")
     mode.add_argument("--skip-models", action="store_true", help="Install only the environment; local model workflows remain unready")
     mode.add_argument("--models-only", action="store_true", help="Install/verify required models with the existing private Python, without reinstalling dependencies")
+    mode.add_argument("--check-only", action="store_true", help="Verify installed files, host packages, models and video tools without installation or downloads")
     parser.add_argument("--dry-run", action="store_true", help="Describe changes and model sources without installing or downloading")
     args = parser.parse_args(argv)
     root = Path(root or Path(__file__).resolve().parents[1]).resolve()
@@ -104,12 +144,14 @@ def main(argv=None, *, root=None):
             "requirements-local.txt", "runtime/workflow_core.py", "runtime/face_mosaic.py", "runtime/depth_video.py"
         )):
             raise RuntimeError("Use the complete extracted customer bundle; the source plugin skeleton is not installable.")
-        if args.models_only:
+        if args.models_only or args.check_only:
             print("Use existing private Python:", python, "(no venv creation or pip install)")
         else:
             print("Create/update private venv:", root / ".venv")
             print("Install local requirements:", root / "requirements-local.txt")
-        if args.skip_models:
+        if args.check_only:
+            print("Offline verification: payload integrity, both host packages, three pages, model inference and FFmpeg; updates installation-check.json, no downloads.")
+        elif args.skip_models:
             print("Models skipped explicitly: face masking and depth processing remain NOT READY.")
             print("Repair later with: python scripts/setup.py --models-only")
         else:
@@ -117,9 +159,9 @@ def main(argv=None, *, root=None):
         print("No global Codex/WorkBuddy configuration is modified; no customer media or provider generation is used.")
         if args.dry_run:
             return 0
-        if not args.models_only and sys.version_info < (3, 10):
+        if not (args.models_only or args.check_only) and sys.version_info < (3, 10):
             raise RuntimeError("Use Python 3.10+ for customer installation (Python 3.12 recommended).")
-        if args.models_only:
+        if args.models_only or args.check_only:
             if not python.is_file():
                 raise RuntimeError("Private Python is missing; run setup.py without --models-only first.")
         else:
@@ -132,7 +174,7 @@ def main(argv=None, *, root=None):
         sys.stdout.flush()
         subprocess.run([
             str(python), "-I", "-c",
-            "import runpy,sys; from pathlib import Path; runpy.run_path(sys.argv[1])['install_models'](Path(sys.argv[2]))",
+            "import runpy,sys; from pathlib import Path; runpy.run_path(sys.argv[1])[" + repr("verify_installation" if args.check_only else "install_and_verify") + "](Path(sys.argv[2]))",
             str(Path(__file__).resolve()), str(root),
         ], cwd=str(root), check=True)
         print("Required local environment and both model checks completed. Paid provider/account validation is separate.")

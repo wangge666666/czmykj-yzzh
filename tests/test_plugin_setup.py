@@ -1,6 +1,7 @@
 """Installer contract tests: temporary bundles and simulated model inference only."""
 import importlib.util
 import io
+import json
 import os
 import subprocess
 import sys
@@ -86,6 +87,39 @@ class SetupTests(unittest.TestCase):
         self.builder.assert_not_called()
         self.run.assert_not_called()
         self.assertIn("Private Python is missing", self.errors.getvalue())
+
+    def test_check_only_never_installs_or_downloads(self):
+        self.existing_python()
+        self.assertEqual(self.main('--check-only'), 0)
+        self.builder.assert_not_called()
+        self.run.assert_called_once()
+        self.assertIn("'verify_installation'", self.run.call_args.args[0][3])
+        self.assertNotIn("'install_and_verify'", self.run.call_args.args[0][3])
+
+    def test_full_install_verifies_after_models_and_does_not_claim_completion_on_check_failure(self):
+        self.run.side_effect = [None, subprocess.CalledProcessError(1, 'fixture-check')]
+        self.assertEqual(self.main(), 1)
+        self.assertIn("'install_and_verify'", self.run.call_args.args[0][3])
+        self.assertNotIn('both model checks completed', self.output.getvalue())
+
+    def test_installed_verification_checks_packaged_files_and_does_not_keep_a_stale_success_report(self):
+        archive = build(self.root / 'verify.zip')
+        with zipfile.ZipFile(archive) as bundle:
+            bundle.extractall(self.root / 'installed')
+        plugin = self.root / 'installed/czmiyou-yzzh'
+        self.fake_models()
+        readiness = Mock(return_value={'ready': True, 'checks': [{'label':'synthetic tools','ready':True}]})
+        patch.dict(sys.modules, {'yzzh_local.original_worker': types.SimpleNamespace(local_readiness=readiness)}).start()
+        setup.verify_installation(plugin)
+        report = json.loads((plugin/'installation-check.json').read_text())
+        self.assertTrue(report['local_ready'])
+        self.assertEqual(report['projects'], ['wardrobe','virtual','real'])
+        self.assertFalse(report['paid_generation_tested'])
+        (plugin/'runtime/web/long_video.html').write_text('outdated')
+        with self.assertRaisesRegex(RuntimeError, 'outdated'):
+            setup.verify_installation(plugin)
+        self.assertFalse(json.loads((plugin/'installation-check.json').read_text())['local_ready'])
+        readiness.assert_called_once()
 
     def test_skip_models_explicitly_reports_incomplete_local_readiness(self):
         self.assertEqual(self.main("--skip-models"), 0)
