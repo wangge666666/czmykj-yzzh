@@ -1,5 +1,7 @@
 const state = {
   config: null,
+  characterLibrary: { groups: [], assets: [] },
+  libraryLoading: false,
   jobId: null,
   activeJobId: null,
   shotCount: 0,
@@ -63,6 +65,36 @@ function existingActor(index) {
   return (state.lastJob?.actors || []).find((actor) => Number(actor.id) === index) || null;
 }
 
+function virtualLibraryOptions(selected = "") {
+  const groups = new Map((state.characterLibrary.groups || []).map((group) => [group.id, group.name]));
+  const assets = (state.characterLibrary.assets || []).filter((asset) => asset.status === "Active" && (!asset.asset_type || asset.asset_type === "Image"));
+  const rows = ['<option value="">使用人物图片</option>'];
+  if (selected && !assets.some((asset) => asset.uri === selected)) rows.push(`<option value="${escapeHtml(selected)}" selected>已保存角色 · 待核验</option>`);
+  for (const asset of assets) rows.push(`<option value="${escapeHtml(asset.uri)}" ${asset.uri === selected ? "selected" : ""}>${escapeHtml(groups.get(asset.group_id) || "角色库")} · ${escapeHtml(asset.name)}</option>`);
+  return rows.join("");
+}
+
+async function loadCharacterLibrary() {
+  if (state.libraryLoading) return;
+  state.libraryLoading = true;
+  $("#refreshVirtualCharacterLibrary").disabled = true;
+  try {
+    const library = await api(`/api/character-library?_=${Date.now()}`);
+    state.characterLibrary = library;
+    const count = (library.assets || []).filter((asset) => asset.status === "Active").length;
+    $("#virtualCharacterLibraryState").textContent = `${count} 个可用角色 · ${library.message || "请选择已有角色或上传人物图片"}`;
+    for (let index = 1; index <= state.actorCount; index += 1) {
+      const input = $(`#personAsset${index}`), select = $(`#personLibrary${index}`);
+      if (input && select) select.innerHTML = virtualLibraryOptions(input.value);
+    }
+  } catch (error) {
+    $("#virtualCharacterLibraryState").textContent = `角色库刷新失败：${error.message}；当前选择与本地素材已保留。`;
+  } finally {
+    state.libraryLoading = false;
+    $("#refreshVirtualCharacterLibrary").disabled = false;
+  }
+}
+
 function actorTemplate(index, existing = null) {
   const role = existing?.role || defaultRoles[index - 1];
   const personNote = existing?.has_person ? "已保存人物素材，可直接复用" : "虚构 / AI角色图片";
@@ -72,13 +104,17 @@ function actorTemplate(index, existing = null) {
       <div class="long-actor-head"><div><span class="long-actor-index">${String(index).padStart(2, "0")}</span><b>人物 ${index}</b><small>跨分镜固定身份</small></div><small>每个分镜按需选择</small></div>
       <div class="long-actor-body">
         <div class="field role-field"><label for="roleDescription${index}">原片角色定位</label><input id="roleDescription${index}" type="text" maxlength="200" value="${escapeHtml(role)}"><small>例如：画面左侧短发人物</small></div>
-        <div class="long-actor-asset"><b>人物形象</b><label class="mini-drop" for="personImage${index}"><input id="personImage${index}" type="file" accept="image/*,.heic,.heif"><span>选择人物图片</span><small id="personFileName${index}" class="${existing?.has_person ? "saved-reference" : ""}">${personNote}</small></label><input id="personAsset${index}" type="text" placeholder="或填写 asset://asset-..."></div>
+        <div class="long-actor-asset"><b>人物形象</b><label class="mini-drop" for="personImage${index}"><input id="personImage${index}" type="file" accept="image/*,.heic,.heif"><span>选择人物图片</span><small id="personFileName${index}" class="${existing?.has_person ? "saved-reference" : ""}">${personNote}</small></label><label for="personLibrary${index}">或使用角色库已有角色</label><select id="personLibrary${index}">${virtualLibraryOptions(existing?.asset_uri || "")}</select><input id="personAsset${index}" type="${state.config?.plugin_service_mode === "platform" ? "hidden" : "text"}" value="${escapeHtml(existing?.asset_uri || "")}" placeholder="或填写 asset://asset-..."></div>
         <div class="long-actor-asset"><b>对应服装</b><label class="mini-drop" for="clothingImage${index}"><input id="clothingImage${index}" type="file" accept="image/*,.heic,.heif"><span>选择服装图片</span><small id="clothingFileName${index}" class="${existing?.has_clothing ? "saved-reference" : ""}">${clothingNote}</small></label></div>
       </div>
     </article>`;
 }
 
 function bindActor(index) {
+  $(`#personLibrary${index}`).addEventListener("change", () => {
+    $(`#personAsset${index}`).value = $(`#personLibrary${index}`).value;
+    invalidateCastConfirmation();
+  });
   $(`#roleDescription${index}`).addEventListener("input", () => {
     document.querySelectorAll(`[data-person-mapping] option[value="${index}"]`).forEach((node) => {
       node.textContent = `人物${index} · ${$(`#roleDescription${index}`).value.trim() || `人物${index}`}`;
@@ -1331,9 +1367,11 @@ async function loadConfig() {
       renderActorList([]);
       initializeSceneLibrary(null);
     }
+    await loadCharacterLibrary();
   } catch (error) { toast(error.message, true); renderActorList([]); }
 }
 
+$("#refreshVirtualCharacterLibrary").addEventListener("click", loadCharacterLibrary);
 bind("#referenceVideo", "#videoFileName");
 $("#sceneGroupList").addEventListener("change", (event) => {
   const fileInput = event.target.closest("[data-scene-files]");
