@@ -546,7 +546,8 @@ def configure(config):
                     if "groups" in data and "assets" in data:
                         from yzzh_local.original_media import library_status
                         if media_mode == "platform":
-                            data.update(storage_mode="platform", message="人物库由米哟平台提供，按账号与通道管理；无需填写 AK/SK。" if data.get("configured") else "平台人物服务尚未就绪，请联系管理员配置。")
+                            from yzzh_local.platform import platform_library_status
+                            data = platform_library_status(data)
                         else:
                             data = library_status(data, media_mode)
                     elif data.get("asset_id") and data.get("status") == "Processing" and media_mode == "temporary":

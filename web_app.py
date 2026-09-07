@@ -7093,6 +7093,9 @@ def _load_ark_character_library() -> dict[str, Any]:
                     "id": group_id,
                     "name": str(_ark_asset_value(item, "Name", "name") or group_id),
                     "description": str(_ark_asset_value(item, "Description", "description") or ""),
+                    "shared": item.get("Shared") is True,
+                    "can_delete": item.get("CanDelete") is not False,
+                    "can_upload": item.get("CanUpload") is not False,
                     "group_type": str(
                         _ark_asset_value(item, "GroupType", "group_type") or group_type
                     ),
@@ -7122,9 +7125,12 @@ def _load_ark_character_library() -> dict[str, Any]:
                     "asset_type": str(_ark_asset_value(item, "AssetType", "asset_type") or ""),
                     "status": str(_ark_asset_value(item, "Status", "status") or ""),
                     "url": str(_ark_asset_value(item, "URL", "Url", "url") or ""),
+                    "shared": item.get("Shared") is True,
+                    "can_delete": item.get("CanDelete") is not False,
+                    "preview_error": str(item.get("PreviewError") or ""),
                 }
             )
-    storage_mode = "tos" if TosMediaStore.configured() else "project_tunnel"
+    storage_mode = "platform" if getattr(client, "storage_mode", "") == "platform" else "tos" if TosMediaStore.configured() else "project_tunnel"
     stale = False
     cached_at = ""
     if remote_errors:
@@ -7150,6 +7156,7 @@ def _load_ark_character_library() -> dict[str, Any]:
         "groups": groups,
         "assets": assets,
         "message": "；".join(errors),
+        "read_error": bool(remote_errors),
         "project_name": ark_assets_project_name(),
         "stale": stale,
         "cached_at": cached_at,

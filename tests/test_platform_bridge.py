@@ -27,7 +27,7 @@ def capabilities():
             "capabilities": {key: True for key in ("video", "image", "analysis", "assets", "media")},
             "models": {"video": "fixture-video", "white": "fixture-white", "image": "fixture-image", "analysis": "fixture-analysis"},
             "projects": ["wardrobe", "virtual", "real"], "balance": 120.5, "licensed": True,
-            "fields": {}, "configured": True}
+            "fields": {}, "configured": True, "channel": "primary", "asset_library": "canvas-shared-v1"}
 
 
 class StreamResponse:

@@ -204,8 +204,10 @@ function realCharacterGroups() {
 
 function syncCharacterGroupActions() {
   const selected = $("#arkCharacterGroup")?.value || "";
-  $("#renameCharacterGroupBtn").disabled = !selected;
-  $("#deleteCharacterGroupBtn").disabled = !selected;
+  const group = realCharacterGroups().find((item) => item.id === selected);
+  $("#renameCharacterGroupBtn").disabled = !group || group.can_delete === false;
+  $("#deleteCharacterGroupBtn").disabled = !group || group.can_delete === false;
+  $("#uploadCharacterAssetBtn").disabled = !group || group.can_upload === false;
 }
 
 function renderCharacterLibrary() {
@@ -233,7 +235,7 @@ function renderCharacterLibrary() {
     const preview = asset.url
       ? `<button type="button" class="ark-character-asset-preview" data-real-reference-preview-url="${escapeHtml(asset.url)}" data-real-reference-preview-caption="${escapeHtml(asset.name)}"><img src="${escapeHtml(asset.url)}" alt="${escapeHtml(asset.name)}" loading="lazy"><span>预览</span></button>`
       : `<div class="asset-placeholder">ARK</div>`;
-    return `<article class="ark-character-asset">${preview}<div class="ark-character-asset-copy"><b title="${escapeHtml(asset.name)}">${escapeHtml(asset.name)}</b><small>${escapeHtml(group?.name || asset.group_id || "未分组")} · ${escapeHtml(asset.status || "未知")}</small><small class="ark-character-asset-uri" title="${escapeHtml(asset.uri)}">${escapeHtml(asset.uri)}</small></div><button type="button" data-delete-character-asset="${escapeHtml(asset.id)}">删除</button></article>`;
+    return `<article class="ark-character-asset">${preview}<div class="ark-character-asset-copy"><b title="${escapeHtml(asset.name)}">${escapeHtml(asset.name)}</b><small>${escapeHtml(group?.name || asset.group_id || "未分组")} · ${escapeHtml(asset.status || "未知")}</small><small class="ark-character-asset-uri" title="${escapeHtml(asset.uri)}">${escapeHtml(asset.uri)}</small></div>${asset.can_delete === false ? `<small>公司共享角色</small>` : `<button type="button" data-delete-character-asset="${escapeHtml(asset.id)}">删除</button>`}</article>`;
   }).join("");
   $("#arkCharacterAssetList").innerHTML = items || `<div class="scene-library-empty">暂无 AIGC 虚拟人像素材；可先在上方创建虚拟人像组。</div>`;
   bindActorReferencePreviews($("#arkCharacterAssetList"));
@@ -241,12 +243,17 @@ function renderCharacterLibrary() {
 }
 
 function characterGroupOptions(selected = "") {
-  const groups = realCharacterGroups();
+  const groups = realCharacterGroups().filter((group) => group.can_upload !== false);
   const rows = [`<option value="">选择 AIGC 虚拟人像组</option>`];
   for (const group of groups) {
     rows.push(`<option value="${escapeHtml(group.id)}" ${group.id === selected ? "selected" : ""}>${escapeHtml(group.name)}</option>`);
   }
   return rows.join("");
+}
+
+function canManageCharacterAsset(uri) {
+  const asset = (state.characterLibrary?.assets || []).find((item) => item.uri === uri);
+  return asset ? asset.can_delete !== false : state.characterLibrary?.storage_mode !== "platform";
 }
 
 function syncActorLibraryUploadControl(index) {
@@ -256,7 +263,7 @@ function syncActorLibraryUploadControl(index) {
   const hint = document.querySelector(`#actorArkUploadHint${index}`);
   if (!card || !fields || !hint) return;
   const usesAsset = document.querySelector(`#actorSource${index}`)?.value === "ark_asset";
-  const libraryReady = Boolean(state.characterLibrary?.upload_ready && realCharacterGroups().length);
+  const libraryReady = Boolean(state.characterLibrary?.upload_ready && realCharacterGroups().some((group) => group.can_upload !== false));
   const running = state.busy || ["queued", "running"].includes(state.lastJob?.status);
   const uploadButton = card.querySelector("[data-upload-actor-character]");
   const deleteButton = card.querySelector("[data-delete-actor-character]");
@@ -271,10 +278,10 @@ function syncActorLibraryUploadControl(index) {
         ? "当前任务运行中，请完成或暂停后再上传。"
         : libraryReady
           ? "将本人物图片单独上传到火山角色库并等待变为 Active。"
-          : "当前缺少火山素材库 AK/SK；点击后会显示具体缺项。";
+          : "当前人物库尚未就绪；请查看顶部服务状态。";
   }
   if (deleteButton) {
-    const hasBoundAsset = /^asset:\/\/asset-[A-Za-z0-9_-]{6,120}$/.test(boundAssetUri);
+    const hasBoundAsset = /^asset:\/\/asset-[A-Za-z0-9_-]{6,120}$/.test(boundAssetUri) && canManageCharacterAsset(boundAssetUri);
     deleteButton.disabled = running || !hasBoundAsset;
     deleteButton.dataset.assetUri = hasBoundAsset ? boundAssetUri : "";
     deleteButton.title = hasBoundAsset
@@ -379,6 +386,7 @@ async function confirmQuickCharacterGroup() {
 }
 
 async function renameSelectedCharacterGroup() {
+  if (realCharacterGroups().find((item) => item.id === $("#arkCharacterGroup").value)?.can_delete === false) return toast("公司共享角色请在画布或创作中心管理。", true);
   const groupId = $("#arkCharacterGroup").value;
   const group = realCharacterGroups().find((item) => item.id === groupId);
   if (!group) return toast("请先选择要重命名的 AIGC 虚拟人像组。", true);
@@ -405,6 +413,7 @@ async function deleteSelectedCharacterGroup() {
   const groupId = $("#arkCharacterGroup").value;
   const group = realCharacterGroups().find((item) => item.id === groupId);
   if (!group) return toast("请先选择要删除的 AIGC 虚拟人像组。", true);
+  if (group.can_delete === false) return toast("公司共享角色请在画布或创作中心管理。", true);
   const assetCount = (state.characterLibrary.assets || []).filter((asset) => asset.group_id === groupId).length;
   if (assetCount) return toast(`该角色组还有 ${assetCount} 个素材，请先逐个删除素材，再删除角色组。`, true);
   if (!(await confirmAction(`确定永久删除 AIGC 虚拟人像组“${group.name}”吗？\n${groupId}\n\n该操作不可撤销。`, { title: "删除虚拟人像组", confirmLabel: "永久删除", danger: true }))) return;
@@ -437,6 +446,7 @@ async function uploadCharacterAsset() {
 }
 
 async function deleteCharacterAsset(assetId) {
+  if ((state.characterLibrary.assets || []).find((item) => item.id === assetId)?.can_delete === false) return toast("公司共享角色请在画布或创作中心管理。", true);
   const asset = (state.characterLibrary.assets || []).find((item) => item.id === assetId);
   if (!asset) return;
   if (!(await confirmAction(`确定从火山人物库永久删除“${asset.name}”吗？\n${asset.uri}\n\n该操作不可撤销，已引用此素材的旧任务可能无法再次生成。`, { title: "删除火山人物素材", confirmLabel: "永久删除", danger: true }))) return;
@@ -592,7 +602,7 @@ function actorTemplate(index, existing = null) {
     ? `上次角色库提交：${libraryStatus}${existing?.ark_library_asset_uri ? ` · ${existing.ark_library_asset_uri}` : ""}`
     : "人物图必须先上传角色库并变为 Active，才能生成成片。";
   const boundAssetUri = existing?.asset_uri || existing?.ark_library_asset_uri || "";
-  const canDeleteBoundAsset = /^asset:\/\/asset-[A-Za-z0-9_-]{6,120}$/.test(boundAssetUri);
+  const canDeleteBoundAsset = /^asset:\/\/asset-[A-Za-z0-9_-]{6,120}$/.test(boundAssetUri) && canManageCharacterAsset(boundAssetUri);
   return `
     <article class="long-actor-card" data-actor-index="${index}">
       <div class="long-actor-head"><div><span class="long-actor-index">${String(index).padStart(2, "0")}</span><b>人物 ${index}</b><small>跨分镜固定身份</small></div><small>每个分镜按需选择</small></div>
@@ -1474,6 +1484,8 @@ async function uploadSingleActorToLibrary(index) {
 }
 
 async function deleteActorCharacterAsset(index) {
+  const bound = existingActor(index)?.asset_uri || existingActor(index)?.ark_library_asset_uri || "";
+  if (!canManageCharacterAsset(bound)) return toast("公司共享角色请在画布或创作中心管理。", true);
   const existing = existingActor(index);
   const assetUri = existing?.asset_uri || existing?.ark_library_asset_uri || "";
   if (!/^asset:\/\/asset-[A-Za-z0-9_-]{6,120}$/.test(assetUri)) return toast(`人物 ${index} 尚未绑定可删除的火山角色素材。`, true);

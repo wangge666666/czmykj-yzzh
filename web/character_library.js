@@ -113,7 +113,7 @@
       ${managerMarkup}
     </div>
     <div class="shared-character-source-pane" data-character-existing-pane>
-      <div class="shared-character-pane-heading"><div><b>使用角色库已有角色</b><small>选择 Active 角色作为当前模式的人物身份；每张角色卡都可单独删除。</small></div><span>选择 / 删除</span></div>
+      <div class="shared-character-pane-heading"><div><b>使用角色库已有角色</b><small>选择 Active 角色作为当前模式的人物身份；公司共享角色可直接使用，本账号角色可单独管理。</small></div><span>选择 / 管理</span></div>
       <div class="shared-character-selected" data-character-selected></div>
       <div class="shared-character-toolbar">
         <label><span>按人像组筛选</span><select data-character-group-filter><option value="">全部 AIGC 人像组</option></select></label>
@@ -184,7 +184,7 @@
   }
 
   function groupOptions(includeAll = true) {
-    const groups = (state.library.groups || []).filter((group) => group.group_type === "AIGC");
+    const groups = (state.library.groups || []).filter((group) => group.group_type === "AIGC" && (includeAll || group.can_upload !== false));
     const first = includeAll ? '<option value="">全部 AIGC 人像组</option>' : '<option value="">请选择 AIGC 人像组</option>';
     return first + groups.map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`).join("");
   }
@@ -211,7 +211,7 @@
       const preview = asset.url && !state.previewFailures.has(asset.uri)
         ? `<img src="${escapeHtml(asset.url)}" alt="${escapeHtml(asset.name)}" loading="lazy" data-character-preview="${escapeHtml(asset.uri)}">`
         : unavailablePreview(asset.preview_error || undefined);
-      return `<article class="shared-character-card${selected ? " selected" : ""}">${preview}<div><b>${escapeHtml(asset.name)}</b><small>${escapeHtml(groupMap.get(asset.group_id)?.name || "未分组")} · ${escapeHtml(asset.status || "未知")}</small><small title="${escapeHtml(asset.uri)}">${escapeHtml(asset.uri)}</small></div><footer><button type="button" data-character-select="${escapeHtml(asset.uri)}" ${active ? "" : `data-character-unavailable="${escapeHtml(asset.status || "未激活")}"`}>${selected ? "正在使用" : active ? "使用此角色" : "尚不可用"}</button><button type="button" data-character-delete="${escapeHtml(asset.id)}">删除</button></footer></article>`;
+      return `<article class="shared-character-card${selected ? " selected" : ""}">${preview}<div><b>${escapeHtml(asset.name)}</b><small>${escapeHtml(groupMap.get(asset.group_id)?.name || "未分组")} · ${escapeHtml(asset.status || "未知")}</small><small title="${escapeHtml(asset.uri)}">${escapeHtml(asset.uri)}</small></div><footer><button type="button" data-character-select="${escapeHtml(asset.uri)}" ${active ? "" : `data-character-unavailable="${escapeHtml(asset.status || "未激活")}"`}>${selected ? "正在使用" : active ? "使用此角色" : "尚不可用"}</button>${asset.can_delete === false ? `<small>公司共享角色</small>` : `<button type="button" data-character-delete="${escapeHtml(asset.id)}">删除</button>`}</footer></article>`;
     }).join("") : '<div class="shared-character-empty">当前筛选下没有人物素材。可在下方创建人像组并上传人物。</div>';
   }
 
@@ -222,8 +222,9 @@
     within("[data-character-group-filter]").innerHTML = groupOptions(true);
     within("[data-character-upload-group]").innerHTML = groupOptions(false);
     if (groups.some((group) => group.id === previousFilter)) within("[data-character-group-filter]").value = previousFilter;
-    if (groups.some((group) => group.id === previousUploadGroup)) within("[data-character-upload-group]").value = previousUploadGroup;
-    else if (groups.length === 1) within("[data-character-upload-group]").value = groups[0].id;
+    const uploadGroups = groups.filter((group) => group.can_upload !== false);
+    if (uploadGroups.some((group) => group.id === previousUploadGroup)) within("[data-character-upload-group]").value = previousUploadGroup;
+    else within("[data-character-upload-group]").value = uploadGroups.length === 1 ? uploadGroups[0].id : "";
     const activeCount = activeAssets().length;
     const status = state.library.configured
       ? `${groups.length} 个人像组 · ${activeCount} 个可用角色${state.library.stale ? " · 当前显示缓存" : ""}`
@@ -318,7 +319,7 @@
 
   function askDelete(assetId) {
     const asset = (state.library.assets || []).find((item) => item.id === assetId);
-    if (!asset) return;
+    if (!asset || asset.can_delete === false) return;
     state.pendingDelete = assetId;
     const node = within("[data-character-delete-confirm]");
     node.hidden = false;
@@ -335,7 +336,7 @@
 
   async function confirmDelete() {
     const asset = (state.library.assets || []).find((item) => item.id === state.pendingDelete);
-    if (!asset) return cancelDelete();
+    if (!asset || asset.can_delete === false) return cancelDelete();
     const button = within("[data-character-delete-confirmed]");
     button.disabled = true;
     button.textContent = "正在删除…";

@@ -157,6 +157,8 @@ class PlatformVideoClient(ArkVideoClient):
 
 
 class PlatformAssetsClient(ArkAssetsClient):
+    storage_mode = "platform"
+
     def __init__(self, transport: PlatformTransport, *, project_name: str = "default") -> None:
         self.transport = transport
         self.project_name = str(project_name or "default").strip() or "default"
@@ -164,7 +166,41 @@ class PlatformAssetsClient(ArkAssetsClient):
     def call(self, action: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         if action not in ASSET_ACTIONS:
             raise WorkflowError("此平台素材库操作尚未支持，未发送请求。")
-        return self.transport.rpc("assets." + action, body or {})
+        if action not in {"ListAssetGroups", "ListAssets"}:
+            return self.transport.rpc("assets." + action, body or {})
+        request = copy.deepcopy(body or {})
+        size = max(1, min(int(request.get("PageSize", 100)), 100))
+        first = max(1, int(request.get("PageNumber", 1)))
+        items, seen = [], set()
+        for page in range(first, first + 100):
+            request.update(PageSize=size, PageNumber=page)
+            data = self.transport.rpc("assets." + action, request)
+            result = data.get("Result") or {}
+            if result.get("LibrarySource") != "canvas-shared-v1":
+                raise WorkflowError("创作中心的角色库接口版本较旧，请管理员部署共享角色库更新；无需重填 Key 或重新上传人物。")
+            rows, total = result.get("Items"), result.get("TotalCount")
+            if not isinstance(rows, list) or type(total) is not int or total < 0 or len(rows) > size:
+                raise WorkflowError("平台角色库返回格式异常，请管理员检查服务版本。")
+            for row in rows:
+                if not isinstance(row, dict) or not row.get("Id"):
+                    raise WorkflowError("平台角色库返回了无效素材记录，请刷新重试。")
+                if row["Id"] not in seen:
+                    items.append(row)
+                    seen.add(row["Id"])
+            if page * size >= total:
+                return {**data, "Result": {**result, "Items": items}}
+        raise WorkflowError("角色库超过本次读取上限，请管理员检查分页；没有返回不完整的成功列表。")
+
+
+def platform_library_status(data):
+    """Keep read errors visible instead of replacing them with a success notice."""
+    result = dict(data)
+    result["storage_mode"] = "platform"
+    if result.get("read_error"):
+        return result
+    result["message"] = ("已连接当前通道的公司角色库；共享角色可直接使用，无需填写 AK/SK。"
+                         if result.get("configured") else "平台人物服务尚未就绪，请联系管理员配置。")
+    return result
 
 
 class _AnalysisResponse:
@@ -301,6 +337,12 @@ def install_platform(web, core, transport: PlatformTransport, publiccapabilities
     web.ark_assets_configured = lambda: assets_ready
     web.ark_assets_project_name = lambda: project_name
     web.ark_assets_client = assets_client
+    # Never fall back to a BYOK or a different platform channel's cached roles.
+    if hasattr(web, "REAL_CHARACTER_LIBRARY_CACHE_PATH"):
+        channel = capabilities.get("channel")
+        suffix = channel if channel in {"primary", "secondary"} else "unverified"
+        web.REAL_CHARACTER_LIBRARY_CACHE_PATH = web.REAL_CHARACTER_LIBRARY_CACHE_PATH.with_name(
+            f"_platform_character_library_{suffix}.json")
     web.performance_analyzer = analyzer
     web.TempFileMediaStore = core.TempFileMediaStore = PlatformMediaStore
     web.TosMediaStore = core.TosMediaStore = NoByokStorage

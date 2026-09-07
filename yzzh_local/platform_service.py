@@ -106,6 +106,8 @@ class PlatformService:
                                and isinstance(projects, list) and all(name in projects for name in PROJECTS))
             result["configured"] = result["ready"]
             result["licensed"] = data.get("licensed") is True
+            result["channel"] = data.get("channel") if data.get("channel") in {"primary", "secondary"} else ""
+            result["asset_library"] = "canvas-shared-v1" if data.get("asset_library") == "canvas-shared-v1" else ""
             balance = data.get("balance")
             if type(balance) in {int, float}:
                 import math

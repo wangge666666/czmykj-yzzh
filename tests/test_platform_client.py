@@ -92,7 +92,7 @@ class PlatformClientTests(unittest.TestCase):
 
     def test_asset_methods_keep_native_actions_and_project_scope(self):
         client = PlatformAssetsClient(self.transport, project_name="fixture-project")
-        self.result = {"Result": {"Items": [{"Id": "group-fixture123"}]}}
+        self.result = {"Result": {"Items": [{"Id": "group-fixture123"}], "TotalCount": 1, "LibrarySource": "canvas-shared-v1"}}
         self.assertEqual(client.list_asset_groups(group_type="AIGC"), [{"Id": "group-fixture123"}])
         self.assertEqual(self.calls[-1][0], "assets.ListAssetGroups")
         self.assertEqual(self.calls[-1][1]["Filter"], {"GroupType": "AIGC"})
@@ -100,7 +100,7 @@ class PlatformClientTests(unittest.TestCase):
         self.assertEqual(client.create_asset_group(name="新角色", description="虚拟角色"), "group-fixture123")
         client.update_asset_group("group-fixture123", name="新名称")
         client.delete_asset_group("group-fixture123")
-        self.result = {"Result": {"Items": [{"Id": "asset-fixture123"}]}}
+        self.result = {"Result": {"Items": [{"Id": "asset-fixture123"}], "TotalCount": 1, "LibrarySource": "canvas-shared-v1"}}
         self.assertEqual(client.list_assets(group_type="AIGC", group_ids=["group-fixture123"], statuses=["Active"]),
                          [{"Id": "asset-fixture123"}])
         self.result = {"Result": {"Id": "asset-fixture123"}}

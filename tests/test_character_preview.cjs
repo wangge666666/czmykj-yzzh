@@ -145,3 +145,17 @@ test('a missing or unsupported preview is never shown as successful', async () =
   assert.doesNotMatch(html, /<img/);
   assert.match(html, /尚未支持安全预览/);
 });
+
+test('shared roles remain selectable but cannot be deleted or used as upload targets', async () => {
+  const initial = library();
+  initial.groups[0].can_upload = false;
+  initial.assets[0].can_delete = false;
+  const f = await fixture(initial);
+  const html = f.nodes.get('[data-character-assets]').innerHTML;
+  assert.match(html, /data-character-select/);
+  assert.match(html, /公司共享角色/);
+  assert.doesNotMatch(html, /data-character-delete=/);
+  assert.doesNotMatch(f.nodes.get('[data-character-upload-group]').innerHTML, /group-a/);
+  assert.match(f.nodes.get('[data-character-group-filter]').innerHTML, /group-a/);
+  assert.equal(f.person.value, 'asset://asset-fixture01');
+});

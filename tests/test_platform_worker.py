@@ -16,6 +16,49 @@ class PlatformWorkerTests(unittest.TestCase):
     login = original.OriginalTests.login
     call = original.OriginalTests.call
 
+    def test_shared_library_metadata_and_read_failure_reach_original_pages_without_credentials(self):
+        self.runtime.mode = 'platform'
+        self.runtime.platform = Mock()
+        self.runtime.platform.capabilities.side_effect = lambda *_args, **_kw: copy.deepcopy(platform.capabilities())
+        self.runtime.settings.load = Mock(side_effect=AssertionError('No BYOK key access'))
+        self.runtime.settings.public = Mock(side_effect=AssertionError('No BYOK key access'))
+        self.runtime.platform.upload.side_effect = AssertionError('No uploads')
+        def operation(_token, request):
+            command = request['operation']
+            if command == 'assets.ListAssetGroups':
+                rows = [{'Id':'group-canvas-primary-12','Name':'公司角色','GroupType':'AIGC','Shared':True,'CanDelete':False,'CanUpload':False}]
+            elif command == 'assets.ListAssets':
+                rows = [{'Id':'asset-existing1','Name':'原角色','GroupId':'group-canvas-primary-12','GroupType':'AIGC','AssetType':'Image',
+                         'Status':'Active','Shared':True,'CanDelete':False,'URL':''}]
+            else:
+                raise AssertionError('Unexpected cloud action '+command)
+            return {'ResponseMetadata':{},'Result':{'Items':rows,'TotalCount':1,'LibrarySource':'canvas-shared-v1'}}
+        self.runtime.platform.operation.side_effect = operation
+        server = make_server('127.0.0.1', self.port, self.app, threaded=True, request_handler=original.Quiet)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
+        self.login()
+        for project in ('wardrobe','long-video','real-long-video'):
+            self.assertEqual(self.call('/projects/'+project).status_code, 200)
+        for path in ('/api/character-library','/api/real-long-video/character-library'):
+            response = self.call(path)
+            self.assertEqual(response.status_code,200,response.data[:300])
+            self.assertFalse(response.json['read_error'])
+            self.assertTrue(response.json['assets'][0]['shared'])
+            self.assertFalse(response.json['assets'][0]['can_delete'])
+            self.assertFalse(response.json['groups'][0]['can_upload'])
+            self.assertEqual(response.json['storage_mode'],'platform')
+        self.runtime.platform.operation.side_effect = lambda *_: {'Result':{'Items':[]}}
+        response = self.call('/api/character-library')
+        self.assertTrue(response.json['read_error'])
+        self.assertTrue(response.json['stale'])
+        self.assertEqual(response.json['assets'][0]['id'],'asset-existing1')
+        self.assertIn('管理员部署共享角色库更新',response.json['message'])
+        self.assertTrue((self.root/'data/original/71/platform/runs/_platform_character_library_primary.json').is_file())
+        self.assertFalse(self.bridge.pending)
+        self.runtime.platform.upload.assert_not_called()
+        self.runtime.settings.load.assert_not_called()
+
     def test_three_pages_share_platform_engine_and_both_long_projects_split_without_keys(self):
         self.runtime.mode='platform'
         self.runtime.platform=Mock()
