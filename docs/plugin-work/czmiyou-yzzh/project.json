@@ -1,0 +1,17 @@
+{
+  "slug": "czmiyou-yzzh",
+  "title": "衣装智换客户版插件",
+  "kind": "generic",
+  "created": "2026-09-06",
+  "required_files": [
+    "00-interview.md",
+    "01-requirements.md",
+    "02-shape-decision.md",
+    "03-design.md",
+    "04-implementation-plan.md",
+    "05-task-log.md",
+    "06-review.md",
+    "07-delivery-evidence.md",
+    "08-user-check.md"
+  ]
+}

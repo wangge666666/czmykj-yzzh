@@ -1,0 +1,19 @@
+{
+  "name": "czmiyou-yzzh",
+  "version": "0.5.0",
+  "description": "衣装智换 BYOK 预览：CZMIYOU 时间卡授权，客户自带 API Key 生成视频",
+  "author": {
+    "name": "CZMIYOU"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "衣装智换",
+    "shortDescription": "时间卡授权，自带 Key 生成，本地任务可恢复",
+    "longDescription": "BYOK 开发预览：保留原创作界面，配置自己的方舟 Key；素材经确认后自动临时上传，TOS 可选。不需要独立视频中转服务，不扣中央余额；人物授权审核、供应商生成和双宿主验收分别验证。",
+    "developerName": "CZMIYOU",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": ["打开衣装智换工作台", "查看衣装智换任务进度", "把我选择的视频分镜并预览"]
+  },
+  "mcpServers": "./.mcp.json"
+}

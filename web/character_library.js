@@ -139,12 +139,13 @@
       <button type="button" data-character-refresh>刷新角色库</button>
     </header>
     <div class="shared-character-library-state" data-character-state>正在读取火山角色库…</div>
+    <div class="shared-character-library-state" data-character-preview-state role="status" hidden></div>
     ${libraryBody}`;
   const heading = host.querySelector(":scope > .panel-heading");
   if (heading) heading.insertAdjacentElement("afterend", panel);
   else host.prepend(panel);
 
-  const state = { library: { configured: false, groups: [], assets: [] }, loading: false, pendingDelete: "", sourceMode: "existing", processingRefreshTimer: 0 };
+  const state = { library: { configured: false, groups: [], assets: [] }, loading: false, pendingDelete: "", sourceMode: "existing", processingRefreshTimer: 0, previewFailures: new Set() };
   const within = (selector) => panel.querySelector(selector);
   const activeAssets = () => (state.library.assets || []).filter((asset) =>
     asset.status === "Active" && (!asset.asset_type || asset.asset_type === "Image")
@@ -188,6 +189,17 @@
     return first + groups.map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`).join("");
   }
 
+  function unavailablePreview(message = "图片未加载，可刷新角色库重试。") {
+    return `<div class="shared-character-placeholder" title="${escapeHtml(message)}"><span>预览不可用</span><button type="button" data-character-preview-retry aria-label="重新读取角色库并重试预览">重试预览</button></div>`;
+  }
+
+  function renderPreviewState() {
+    const count = state.previewFailures.size;
+    const node = within("[data-character-preview-state]");
+    node.hidden = count === 0;
+    node.textContent = count ? `${count} 张角色预览未加载。点击“重试预览”可重新读取角色库；当前角色选择和本地素材会保留。` : "";
+  }
+
   function renderAssets() {
     const filter = within("[data-character-group-filter]").value;
     const all = state.library.assets || [];
@@ -196,9 +208,9 @@
     within("[data-character-assets]").innerHTML = visible.length ? visible.map((asset) => {
       const active = asset.status === "Active" && (!asset.asset_type || asset.asset_type === "Image");
       const selected = selectedUri() === asset.uri;
-      const preview = asset.url
-        ? `<img src="${escapeHtml(asset.url)}" alt="${escapeHtml(asset.name)}" loading="lazy">`
-        : '<div class="shared-character-placeholder">ARK</div>';
+      const preview = asset.url && !state.previewFailures.has(asset.uri)
+        ? `<img src="${escapeHtml(asset.url)}" alt="${escapeHtml(asset.name)}" loading="lazy" data-character-preview="${escapeHtml(asset.uri)}">`
+        : unavailablePreview(asset.preview_error || undefined);
       return `<article class="shared-character-card${selected ? " selected" : ""}">${preview}<div><b>${escapeHtml(asset.name)}</b><small>${escapeHtml(groupMap.get(asset.group_id)?.name || "未分组")} · ${escapeHtml(asset.status || "未知")}</small><small title="${escapeHtml(asset.uri)}">${escapeHtml(asset.uri)}</small></div><footer><button type="button" data-character-select="${escapeHtml(asset.uri)}" ${active ? "" : `data-character-unavailable="${escapeHtml(asset.status || "未激活")}"`}>${selected ? "正在使用" : active ? "使用此角色" : "尚不可用"}</button><button type="button" data-character-delete="${escapeHtml(asset.id)}">删除</button></footer></article>`;
     }).join("") : '<div class="shared-character-empty">当前筛选下没有人物素材。可在下方创建人像组并上传人物。</div>';
   }
@@ -244,10 +256,12 @@
     button.textContent = "正在刷新…";
     try {
       state.library = await request(`/api/character-library?_=${Date.now()}`, { cache: "no-store" });
+      state.previewFailures.clear();
+      renderPreviewState();
       renderLibrary();
     } catch (error) {
-      state.library = { configured: false, groups: [], assets: [], message: error.message };
-      renderLibrary();
+      // A failed read must not replace existing cards, filters, selections or files.
+      within("[data-character-state]").textContent = `角色库刷新失败：${error.message}。现有选择和素材已保留，请稍后重试。`;
       notify(error.message, true);
     } finally {
       state.loading = false;
@@ -354,10 +368,21 @@
     notify("已选择火山角色；生成时会将该 Asset 作为人物身份参考。", false);
   }
 
+  // Image errors do not bubble; capture them without an automatic retry loop.
+  panel.addEventListener("error", (event) => {
+    const image = event.target;
+    if (!image.matches?.("img[data-character-preview]")) return;
+    state.previewFailures.add(image.dataset.characterPreview);
+    const placeholder = document.createElement("div");
+    placeholder.innerHTML = unavailablePreview();
+    image.replaceWith(placeholder.firstElementChild);
+    renderPreviewState();
+  }, true);
+
   panel.addEventListener("click", async (event) => {
     const sourceMode = event.target.closest("[data-character-source-mode]");
     if (sourceMode) setSourceMode(sourceMode.dataset.characterSourceMode);
-    else if (event.target.closest("[data-character-refresh]")) loadLibrary();
+    else if (event.target.closest("[data-character-refresh]") || event.target.closest("[data-character-preview-retry]")) loadLibrary();
     else if (event.target.closest("[data-character-clear]")) { setSelected(""); notify("已取消角色库人物绑定。", false); }
     else if (event.target.closest("[data-character-create-group]")) createGroup();
     else if (event.target.closest("[data-character-upload]")) uploadAsset();

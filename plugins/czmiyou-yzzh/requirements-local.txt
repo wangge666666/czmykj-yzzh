@@ -1,0 +1,9 @@
+# Private customer venv only. Deliberately excludes Demucs, PyTorch and CUDA.
+numpy==2.2.6
+opencv-python==4.12.0.88
+onnxruntime==1.27.0
+requests==2.32.5
+imageio-ffmpeg==0.6.0
+Flask==3.1.3
+waitress==3.0.2
+tos==2.9.2

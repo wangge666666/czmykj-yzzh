@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import numpy as np
 
+import face_mosaic
 from face_mosaic import (
     FaceBoxTracker,
     apply_pixel_mosaic,
@@ -12,6 +17,95 @@ from face_mosaic import (
     select_eye_privacy_faces,
 )
 from workflow_core import WorkflowError
+
+
+class FaceModelIntegrityTests(unittest.TestCase):
+    """Synthetic weights exercise integrity and repair without downloading."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.target = self.root / "models" / "face_detection_yunet_2023mar.onnx"
+        self.target.parent.mkdir()
+        self.valid = b"synthetic-yunet-fixture" * 64
+        for name, value in (
+            ("FACE_MODEL_PATH", self.target),
+            ("FACE_MODEL_SIZE_BYTES", len(self.valid)),
+            ("FACE_MODEL_SHA256", hashlib.sha256(self.valid).hexdigest()),
+        ):
+            setting = patch.object(face_mosaic, name, value)
+            setting.start()
+            self.addCleanup(setting.stop)
+        transport = patch.object(face_mosaic.requests, "get")
+        self.get = transport.start()
+        self.addCleanup(transport.stop)
+
+    def download(self, content):
+        result = Mock()
+        result.__enter__ = Mock(return_value=result)
+        result.__exit__ = Mock(return_value=False)
+        result.iter_content.return_value = [content[:32], content[32:]]
+        return result
+
+    def test_exact_size_and_digest_are_both_required(self):
+        self.assertFalse(face_mosaic._valid_face_model(self.target))
+        for invalid in (self.valid[:-1], self.valid + b"x", b"x" * len(self.valid)):
+            self.target.write_bytes(invalid)
+            self.assertFalse(face_mosaic._valid_face_model(self.target))
+        self.target.write_bytes(self.valid)
+        self.assertTrue(face_mosaic._valid_face_model(self.target))
+        self.get.assert_not_called()
+
+    def test_valid_existing_file_is_reused_without_a_download(self):
+        self.target.write_bytes(self.valid)
+        self.assertEqual(face_mosaic.ensure_face_model(), self.target)
+        self.get.assert_not_called()
+
+    def test_corrupted_file_is_replaced_only_after_validated_download(self):
+        damaged = b"x" * len(self.valid)
+        self.target.write_bytes(damaged)
+        self.get.return_value = self.download(self.valid)
+        replace = face_mosaic.os.replace
+
+        def validated_replace(source, destination):
+            self.assertEqual(self.target.read_bytes(), damaged)
+            self.assertTrue(face_mosaic._valid_face_model(source))
+            replace(source, destination)
+
+        with patch.object(face_mosaic.os, "replace", side_effect=validated_replace) as moved:
+            self.assertEqual(face_mosaic.ensure_face_model(), self.target)
+        self.assertEqual(self.target.read_bytes(), self.valid)
+        self.assertEqual(self.get.call_count, 1)
+        moved.assert_called_once()
+        self.assertFalse(self.target.with_suffix(".part").exists())
+
+    def test_invalid_downloads_preserve_original_and_remove_temporary(self):
+        damaged = b"x" * len(self.valid)
+        self.target.write_bytes(damaged)
+        self.get.side_effect = [self.download(damaged) for _ in face_mosaic.FACE_MODEL_DOWNLOAD_SOURCES]
+        with self.assertRaisesRegex(WorkflowError, "SHA-256"):
+            face_mosaic.ensure_face_model()
+        self.assertEqual(self.target.read_bytes(), damaged)
+        self.assertEqual(self.get.call_count, len(face_mosaic.FACE_MODEL_DOWNLOAD_SOURCES))
+        self.assertFalse(self.target.with_suffix(".part").exists())
+
+    def test_second_source_can_repair_after_a_bad_first_download(self):
+        self.get.side_effect = [self.download(b"bad"), self.download(self.valid)]
+        self.assertEqual(face_mosaic.ensure_face_model(), self.target)
+        self.assertTrue(face_mosaic._valid_face_model(self.target))
+        self.assertEqual(self.get.call_count, 2)
+
+    def test_unicode_path_cache_does_not_reuse_same_size_corruption(self):
+        source = self.root / "中文模型.onnx"
+        source.write_bytes(self.valid)
+        cache_root = self.root / "cache"
+        cached = cache_root / "depthflow-model-cache" / source.name
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(b"x" * len(self.valid))
+        with patch.object(face_mosaic.tempfile, "gettempdir", return_value=str(cache_root)):
+            self.assertEqual(face_mosaic._opencv_safe_model_path(source), cached)
+        self.assertTrue(face_mosaic._valid_face_model(cached))
+        self.get.assert_not_called()
 
 
 class FaceMosaicTests(unittest.TestCase):

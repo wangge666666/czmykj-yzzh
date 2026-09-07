@@ -1,0 +1,4 @@
+interface:
+  display_name: "衣装智换"
+  short_description: "本地分镜、打码和深度参考，CZMIYOU 时间卡授权，客户自带 Key 生成"
+  default_prompt: "使用 $yzzh 打开衣装智换工作台，查看我的项目状态。"

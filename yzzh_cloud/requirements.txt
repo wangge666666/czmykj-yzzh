@@ -1,0 +1,6 @@
+# Server-only; no OpenCV, ONNX, torch or local model weights.
+Flask==3.1.3
+waitress==3.0.2
+requests==2.32.5
+PyMySQL==1.1.1
+tos==2.9.2

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import shutil
@@ -24,7 +25,8 @@ FACE_MODEL_DOWNLOAD_SOURCES = (
     "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/"
     "face_detection_yunet/face_detection_yunet_2023mar.onnx",
 )
-MIN_FACE_MODEL_BYTES = 200_000
+FACE_MODEL_SIZE_BYTES = 232_589
+FACE_MODEL_SHA256 = "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
 
 
 Box = tuple[float, float, float, float]
@@ -32,7 +34,13 @@ Box = tuple[float, float, float, float]
 
 def _valid_face_model(path: Path) -> bool:
     try:
-        return path.is_file() and path.stat().st_size >= MIN_FACE_MODEL_BYTES
+        if not path.is_file() or path.stat().st_size != FACE_MODEL_SIZE_BYTES:
+            return False
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(64 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest() == FACE_MODEL_SHA256
     except OSError:
         return False
 
@@ -55,7 +63,7 @@ def ensure_face_model(on_log: Callable[[str], None] | None = None) -> Path:
                         if chunk:
                             handle.write(chunk)
             if not _valid_face_model(temporary):
-                raise WorkflowError("下载内容不是有效的 YuNet ONNX 模型。")
+                raise WorkflowError("下载内容未通过 YuNet 2023mar 模型大小与 SHA-256 校验。")
             os.replace(temporary, FACE_MODEL_PATH)
             return FACE_MODEL_PATH
         except Exception as exc:
@@ -76,7 +84,7 @@ def _opencv_safe_model_path(path: Path) -> Path:
         cache_dir = Path(tempfile.gettempdir()) / "depthflow-model-cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         cached = cache_dir / path.name
-        if not cached.is_file() or cached.stat().st_size != path.stat().st_size:
+        if not _valid_face_model(cached):
             temporary = cached.with_suffix(".part")
             shutil.copyfile(path, temporary)
             os.replace(temporary, cached)
