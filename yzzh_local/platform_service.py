@@ -102,6 +102,7 @@ class PlatformService:
                 and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value)} if isinstance(models, dict) else {}
             projects = data.get("projects", [])
             result["ready"] = (data.get("ready") is True and all(result["capabilities"].values())
+                               and all(name in result["models"] for name in ("video", "white", "image", "analysis"))
                                and isinstance(projects, list) and all(name in projects for name in PROJECTS))
             result["configured"] = result["ready"]
             result["licensed"] = data.get("licensed") is True

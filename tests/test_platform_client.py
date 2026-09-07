@@ -10,7 +10,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from performance_analysis import ArkPerformanceAnalyzer
-from workflow_core import ArkAPIError, ArkConnectionError, WorkflowError
+from workflow_core import (
+    ArkAPIError, ArkConnectionError, WorkflowError,
+    build_multi_seedance_payload, build_scene_seedance_payload, build_seedance_payload,
+)
 from yzzh_local.platform import (
     PlatformAssetsClient, PlatformPerformanceAnalyzer, PlatformTransport,
     PlatformVideoClient, install_platform,
@@ -114,16 +117,12 @@ class PlatformClientTests(unittest.TestCase):
         self.assertFalse(hasattr(client, "access_key"))
         self.assertFalse(hasattr(client, "secret_key"))
 
-    def test_visual_validation_methods_keep_their_request_and_result_contract(self):
+    def test_unsupported_asset_actions_do_not_create_real_person_validation_requests(self):
         client = PlatformAssetsClient(self.transport, project_name="fixture-project")
-        self.result = {"Result": {"BytedToken": "synthetic-validation-id", "H5Link": "https://example.invalid/validation"}}
-        self.assertEqual(client.create_visual_validate_session(callback_url="https://example.invalid/callback")["byted_token"],
-                         "synthetic-validation-id")
-        self.result = {"Result": {"GroupId": "group-fixture123", "Status": "Success"}}
-        self.assertEqual(client.get_visual_validate_result(byted_token="synthetic-validation-id"),
-                         {"group_id": "group-fixture123", "status": "Success"})
-        self.assertEqual([operation for operation, _ in self.calls],
-                         ["assets.CreateVisualValidateSession", "assets.GetVisualValidateResult"])
+        for action in ("GetAssetGroup", "CreateVisualValidateSession", "GetVisualValidateResult"):
+            with self.subTest(action=action), self.assertRaises(WorkflowError):
+                client.call(action, {})
+        self.rpc.assert_not_called()
 
     def test_performance_analysis_reuses_original_prompts_and_normalization(self):
         self.result = {"output_text": json.dumps({"has_dialogue": False, "dialogue": [], "performance": [
@@ -146,9 +145,9 @@ class PlatformClientTests(unittest.TestCase):
         reference = ArkPerformanceAnalyzer("synthetic-test-value", model="fixture-analysis", session=reference_session)
         options = {"shot_slot_counts": {1: 1}, "shot_ranges": [{"index": 1, "start": 0, "end": 1}],
                    "max_characters": 2, "retry_instruction": "保留第一个人物"}
-        expected = reference.analyze_cast_continuity("data:video/mp4;base64,AAAA", **options)
+        expected = reference.analyze_cast_continuity("https://media.example.invalid/cast.mp4", **options)
         result = PlatformPerformanceAnalyzer(self.transport, model="fixture-analysis").analyze_cast_continuity(
-            "data:video/mp4;base64,AAAA", **options)
+            "https://media.example.invalid/cast.mp4", **options)
         self.assertEqual(result, expected)
         self.assertEqual(self.calls, [("analysis.create", reference_session.post.call_args.kwargs["json"])])
 
@@ -268,6 +267,153 @@ class PlatformClientTests(unittest.TestCase):
                     self.upload.return_value = result
                     with self.assertRaisesRegex(WorkflowError, "有效素材地址"):
                         self.transport.upload(source)
+        self.rpc.assert_not_called()
+
+    def test_all_three_image_factories_upload_local_sources_before_native_payload_construction(self):
+        self.result = {"model": "fixture-image", "data": [{"url": "https://media.example.invalid/result.png", "size": "2K"}]}
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "reference.png"
+            source.write_bytes(b"synthetic-large-image" * 20000)
+            for project in ("wardrobe", "virtual", "real"):
+                with self.subTest(project=project):
+                    self.calls.clear()
+                    self.upload.reset_mock()
+                    web, core = self.modules()
+                    install_platform(web, core, self.transport, capabilities())
+                    result = web.api_client().generate_image(prompt=" 原提示词保留 ", image_sources=[str(source)], model="fixture-image")
+                    self.upload.assert_called_once_with(source.resolve())
+                    operation, payload = self.calls[0]
+                    self.assertEqual(operation, "image.generate")
+                    self.assertEqual(payload["prompt"], "原提示词保留")
+                    self.assertEqual(payload["image"], [self.upload.return_value["signed_url"]])
+                    self.assertLess(len(json.dumps(payload).encode()), 256 * 1024)
+                    self.assertNotIn("data:", json.dumps(payload))
+                    self.assertEqual(result["url"], "https://media.example.invalid/result.png")
+
+    def test_original_three_project_video_builders_preserve_order_and_parameters_with_uploaded_images(self):
+        self.result = {"id": "cgt-fixture-task"}
+        with tempfile.TemporaryDirectory() as directory:
+            files = [Path(directory) / name for name in ("person.png", "clothing.jpg", "scene.webp", "sketch.png")]
+            for source in files:
+                source.write_bytes(b"synthetic-image" * 30000)
+            person, clothing, scene, sketch = map(str, files)
+            signed = lambda source: "https://media.example.invalid/" + Path(source).name + "?signature=synthetic"
+            self.upload.side_effect = lambda source: {"object_key": "synthetic/" + source.name, "signed_url": signed(source)}
+            options = dict(prompt="保留动作、人物绑定与场景关系", depth_video_reference="https://media.example.invalid/motion.mp4",
+                           model="fixture-video", resolution="720p", ratio="9:16", duration=6, generate_audio=False, watermark=False)
+            cases = [
+                ("wardrobe", build_seedance_payload, dict(person_source=person, clothing_source=clothing, scene_source=scene),
+                 dict(person_source=signed(person), clothing_source=signed(clothing), scene_source=signed(scene)), files[:3]),
+                ("virtual", build_multi_seedance_payload, dict(character_sources=[(person, clothing)], scene_source=scene),
+                 dict(character_sources=[(signed(person), signed(clothing))], scene_source=signed(scene)), files[:3]),
+                ("real", build_multi_seedance_payload,
+                 dict(character_sources=[("asset://fixture-person", sketch, clothing)], scene_source=scene, include_scene_reference=False),
+                 dict(character_sources=[("asset://fixture-person", signed(sketch), signed(clothing))], scene_source=scene, include_scene_reference=False),
+                 [files[3], files[1]]),
+            ]
+            for project, original, local, uploaded, expected_uploads in cases:
+                with self.subTest(project=project):
+                    self.upload.reset_mock()
+                    web, core = self.modules()
+                    install_platform(web, core, self.transport, capabilities())
+                    payload = getattr(web, original.__name__)(**options, **local)
+                    self.assertEqual(payload, original(**options, **uploaded))
+                    self.assertIs(getattr(core, original.__name__), getattr(web, original.__name__))
+                    web.api_client().create_task(payload)
+                    self.assertEqual(self.calls[-1], ("video.create", payload))
+                    self.assertEqual([call.args[0] for call in self.upload.call_args_list], [path.resolve() for path in expected_uploads])
+                    self.assertNotIn("data:", json.dumps(payload))
+                    self.assertLess(len(json.dumps(payload).encode()), 256 * 1024)
+            # Installation must not patch the original BYOK function globals.
+            byok_payload = build_scene_seedance_payload(**options, scene_source=scene)
+            self.assertTrue(byok_payload["content"][1]["image_url"]["url"].startswith("data:image/"))
+
+    def test_original_scene_only_and_video_only_builders_use_platform_references(self):
+        web, core = self.modules()
+        install_platform(web, core, self.transport, capabilities())
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "scene.png"
+            source.write_bytes(b"synthetic-image")
+            options = dict(prompt="空镜换场景", depth_video_reference="https://media.example.invalid/motion.mp4",
+                           model="fixture", duration=5)
+            payload = web.build_scene_seedance_payload(**options, scene_source=str(source))
+            expected = build_scene_seedance_payload(**options, scene_source=self.upload.return_value["signed_url"])
+            self.assertEqual(payload, expected)
+            self.upload.assert_called_once_with(source.resolve())
+            video_only = web.build_video_reference_seedance_payload(prompt="白模", video_reference=options["depth_video_reference"])
+            self.assertEqual(video_only["content"][1]["video_url"]["url"], options["depth_video_reference"])
+            self.assertEqual(self.upload.call_count, 1)
+
+    def test_both_long_video_projects_upload_analysis_video_and_keep_native_analysis_payload(self):
+        self.result = {"output_text": json.dumps({"has_dialogue": False, "dialogue": [], "performance": []})}
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "shot.mp4"
+            source.write_bytes(b"synthetic-video" * 30000)
+            for project in ("long_video_replication", "real_person_long_video_replication"):
+                with self.subTest(project=project):
+                    self.upload.reset_mock()
+                    web, core = self.modules()
+                    install_platform(web, core, self.transport, capabilities())
+                    store = web.TempFileMediaStore()
+                    url, key = web.long_performance_video_reference(job=SimpleNamespace(project=project), source=source, store=store)
+                    self.assertEqual((url, key), (self.upload.return_value["signed_url"], self.upload.return_value["object_key"]))
+                    web.performance_analyzer().analyze(url, duration=1, max_people=1)
+                    operation, payload = self.calls[-1]
+                    self.assertEqual(operation, "analysis.create")
+                    video_item = next(item for message in payload["input"] for item in message["content"] if item["type"] == "input_video")
+                    self.assertEqual(video_item["video_url"], url)
+                    self.assertEqual(video_item["fps"], 5)
+                    self.assertNotIn("data:", json.dumps(payload))
+                    self.assertLess(len(json.dumps(payload).encode()), 256 * 1024)
+                    store.delete(key)
+                    self.upload.assert_called_once_with(source.resolve())
+
+    def test_inline_media_is_rejected_before_any_platform_request(self):
+        client = PlatformVideoClient(self.transport)
+        web, core = self.modules()
+        install_platform(web, core, self.transport, capabilities())
+        calls = [
+            lambda: client.generate_image(prompt="场景", image_sources=["data:image/png;base64,AAAA"]),
+            lambda: client.create_task({"content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}]}),
+            lambda: client.create_task({"content": [{"type": "video_url", "video_url": {"url": "data:video/mp4;base64,AAAA"}}]}),
+            lambda: web.build_scene_seedance_payload(prompt="场景", scene_source="data:image/png;base64,AAAA", depth_video_reference="https://media.example.invalid/video.mp4"),
+            lambda: web.performance_analyzer().analyze("data:video/mp4;base64,AAAA", duration=1),
+        ]
+        for invoke in calls:
+            with self.subTest(call=invoke), self.assertRaisesRegex(WorkflowError, "内嵌数据"):
+                invoke()
+        self.upload.assert_not_called()
+        self.rpc.assert_not_called()
+
+    def test_upload_rejection_stops_image_video_and_analysis_before_paid_requests(self):
+        web, core = self.modules()
+        install_platform(web, core, self.transport, capabilities())
+        self.upload.side_effect = WorkflowError("用户拒绝素材上传")
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "scene.png"
+            video = Path(directory) / "shot.mp4"
+            image.write_bytes(b"synthetic-image")
+            video.write_bytes(b"synthetic-video")
+            calls = [
+                lambda: web.api_client().generate_image(prompt="场景", image_sources=[str(image)]),
+                lambda: web.build_scene_seedance_payload(prompt="场景", scene_source=str(image), depth_video_reference="https://media.example.invalid/video.mp4"),
+                lambda: web.long_performance_video_reference(SimpleNamespace(project="real_person_long_video_replication"), video, web.TempFileMediaStore()),
+            ]
+            for invoke in calls:
+                self.upload.reset_mock()
+                with self.assertRaisesRegex(WorkflowError, "用户拒绝"):
+                    invoke()
+                self.upload.assert_called_once()
+        self.rpc.assert_not_called()
+
+    def test_invalid_original_prompt_is_rejected_before_upload(self):
+        web, core = self.modules()
+        install_platform(web, core, self.transport, capabilities())
+        with self.assertRaises(WorkflowError):
+            web.build_scene_seedance_payload(prompt="", scene_source="missing.png", depth_video_reference="https://media.example.invalid/video.mp4")
+        with self.assertRaises(WorkflowError):
+            web.api_client().generate_image(prompt="", image_sources=["missing.png"])
+        self.upload.assert_not_called()
         self.rpc.assert_not_called()
 
 

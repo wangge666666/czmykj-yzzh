@@ -12,23 +12,72 @@ Workers receive no platform token, provider key, HTTP session, or HTTP endpoint.
 """
 from __future__ import annotations
 
+import copy
 import re
 from pathlib import Path
+from types import FunctionType
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from performance_analysis import ArkPerformanceAnalyzer, DEFAULT_PERFORMANCE_MODEL
-from workflow_core import ArkAssetsClient, ArkVideoClient, UploadedObject, WorkflowError
+from workflow_core import (
+    ArkAssetsClient, ArkVideoClient, DEFAULT_SEEDREAM_MODEL, UploadedObject, WorkflowError,
+    build_multi_seedance_payload, build_scene_seedance_payload, build_seedance_payload,
+    build_video_reference_seedance_payload,
+)
 
 
 ASSET_ACTIONS = frozenset({
-    "ListAssetGroups", "GetAssetGroup", "CreateAssetGroup", "UpdateAssetGroup", "DeleteAssetGroup",
+    "ListAssetGroups", "CreateAssetGroup", "UpdateAssetGroup", "DeleteAssetGroup",
     "ListAssets", "GetAsset", "CreateAsset", "DeleteAsset",
-    "CreateVisualValidateSession", "GetVisualValidateResult",
 })
 OPERATIONS = frozenset({"video.create", "video.get", "video.list", "image.generate", "analysis.create"}) | {
     "assets." + action for action in ASSET_ACTIONS
 }
+
+
+def _media_reference(source, transport, *, allow_asset=False) -> str:
+    """Keep platform URLs, or upload the original local file through approval."""
+    value = str(source).strip()
+    if value.lower().startswith("data:"):
+        raise WorkflowError("平台素材不能使用内嵌数据；请从本地原文件经确认上传后重试。")
+    if allow_asset and re.fullmatch(r"asset://[A-Za-z0-9_-]+", value):
+        return value
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme == "https" and parsed.hostname and not parsed.username and not parsed.password:
+            # Account ownership and expiry are checked by the platform server.
+            return value
+    except ValueError:
+        raise WorkflowError("平台素材地址无效，未发送请求。") from None
+    if not value or "://" in value or value.startswith("data:"):
+        raise WorkflowError("平台素材必须是本地原文件或已上传的 HTTPS 地址。")
+    return transport.upload(Path(value)).signed_url
+
+
+def _video_payload(payload, transport):
+    result = copy.deepcopy(payload)
+    for item in result.get("content", []):
+        if not isinstance(item, dict) or item.get("type") not in {"image_url", "video_url"}:
+            continue
+        name = item["type"]
+        reference = item.get(name)
+        if isinstance(reference, dict) and "url" in reference:
+            reference["url"] = _media_reference(reference["url"], transport, allow_asset=True)
+    return result
+
+
+def _platform_builder(builder, transport):
+    # The original builders validate parameters and preserve image ordering.
+    # Bind only their conversion helpers; never patch the BYOK module globals
+    # or turn original local files into data URLs that lose their provenance.
+    namespace = dict(builder.__globals__)
+    namespace["image_to_data_url"] = lambda source: _media_reference(source, transport, allow_asset=True)
+    namespace["validate_video_reference"] = lambda source: _media_reference(source, transport, allow_asset=True)
+    adapted = FunctionType(builder.__code__, namespace, builder.__name__, builder.__defaults__, builder.__closure__)
+    adapted.__kwdefaults__ = copy.copy(builder.__kwdefaults__)
+    adapted.__doc__ = builder.__doc__
+    return adapted
 
 
 class PlatformTransport:
@@ -74,7 +123,7 @@ class PlatformVideoClient(ArkVideoClient):
         route = "/" + path.lstrip("/")
         if route == "/contents/generations/tasks":
             if method == "POST":
-                return self.transport.rpc("video.create", json_body or {})
+                return self.transport.rpc("video.create", _video_payload(json_body or {}, self.transport))
             if method == "GET":
                 return self.transport.rpc("video.list", params or {})
         prefix = "/contents/generations/tasks/"
@@ -83,8 +132,24 @@ class PlatformVideoClient(ArkVideoClient):
             if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", task_id):
                 return self.transport.rpc("video.get", {"task_id": task_id})
         if method == "POST" and route == "/images/generations":
-            return self.transport.rpc("image.generate", json_body or {})
+            payload = copy.deepcopy(json_body or {})
+            if "image" in payload:
+                sources = payload["image"]
+                if isinstance(sources, list):
+                    payload["image"] = [_media_reference(source, self.transport) for source in sources]
+                else:
+                    payload["image"] = _media_reference(sources, self.transport)
+            return self.transport.rpc("image.generate", payload)
         raise WorkflowError("此平台模型操作尚未支持，未发送请求。")
+
+    def generate_image(self, *, prompt: str, image_sources: list[str], model: str = DEFAULT_SEEDREAM_MODEL,
+                       size: str = "2K", watermark: bool = False) -> dict[str, Any]:
+        if not prompt.strip():
+            raise WorkflowError("Seedream 场景提取提示词不能为空。")
+        if not 1 <= len(image_sources) <= 10:
+            raise WorkflowError("Seedream 参考图数量必须为 1–10 张。")
+        images = [_media_reference(source, self.transport) for source in image_sources]
+        return super().generate_image(prompt=prompt, image_sources=images, model=model, size=size, watermark=watermark)
 
     def check_credentials(self) -> str:
         self.list_tasks(page_size=1)
@@ -122,7 +187,16 @@ class _AnalysisSession:
             raise WorkflowError("此平台分析操作尚未支持，未发送请求。")
         # Original analyzer builds its complete prompts and normalization. Its
         # empty authorization header stays local and is never passed to RPC.
-        return _AnalysisResponse(self.transport.rpc("analysis.create", json))
+        payload = copy.deepcopy(json)
+        for message in payload.get("input", []):
+            if not isinstance(message, dict):
+                continue
+            for item in message.get("content", []):
+                if isinstance(item, dict) and item.get("type") in {"input_video", "input_image"}:
+                    name = "video_url" if item["type"] == "input_video" else "image_url"
+                    if name in item:
+                        item[name] = _media_reference(item[name], self.transport)
+        return _AnalysisResponse(self.transport.rpc("analysis.create", payload))
 
 
 class PlatformPerformanceAnalyzer(ArkPerformanceAnalyzer):
@@ -214,6 +288,12 @@ def install_platform(web, core, transport: PlatformTransport, publiccapabilities
         cls = web.SeedanceVideoReferenceSource if video else web.ArkCharacterUploadSource
         return cls(url=uploaded.signed_url, channel="platform", object_key=uploaded.object_key)
 
+    def performance_video_reference(job, source, store):
+        # Both long-video projects must use platform-owned media. In particular,
+        # the real project must not retain the original inline-video branch.
+        uploaded = PlatformMediaStore().upload_video(source)
+        return uploaded.signed_url, uploaded.object_key
+
     web.api_client = video_client
     web.ark_assets_credentials = lambda: ("", "")
     web.ark_assets_configured = lambda: assets_ready
@@ -224,4 +304,10 @@ def install_platform(web, core, transport: PlatformTransport, publiccapabilities
     web.TosMediaStore = core.TosMediaStore = NoByokStorage
     web.prepare_seedance_stable_video_reference = lambda source, **kw: prepare(source, video=True, **kw)
     web.prepare_ark_character_upload_source = lambda source, **kw: prepare(source, **kw)
+    web.long_performance_video_reference = performance_video_reference
+    for builder in (build_seedance_payload, build_scene_seedance_payload,
+                    build_multi_seedance_payload, build_video_reference_seedance_payload):
+        adapted = _platform_builder(builder, selected_transport)
+        setattr(web, builder.__name__, adapted)
+        setattr(core, builder.__name__, adapted)
     return "platform"

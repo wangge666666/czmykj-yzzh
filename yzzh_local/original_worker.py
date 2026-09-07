@@ -384,7 +384,7 @@ def configure(config):
         os.environ["ARK_VIDEO_MODEL"] = values["ARK_MODEL"]
     if isinstance(values.get("__platform__"), dict):
         models = values["__platform__"].get("models", {})
-        for field, variable in (("video", "ARK_VIDEO_MODEL"), ("image", "ARK_IMAGE_MODEL"), ("analysis", "ARK_PERFORMANCE_MODEL")):
+        for field, variable in (("white", "ARK_VIDEO_MODEL"), ("image", "ARK_IMAGE_MODEL"), ("analysis", "ARK_PERFORMANCE_MODEL")):
             model = models.get(field)
             if isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", model):
                 os.environ[variable] = model
@@ -440,7 +440,7 @@ def configure(config):
     secrets_to_hide = [values.get(k, "") for k in ("ARK_API_KEY", "TOS_ACCESS_KEY", "TOS_SECRET_KEY")]
     original_log, original_update = web.WebJob.log, web.WebJob.update
     web.WebJob.log = lambda job, message: original_log(job, redact(upload_log(message, media_mode), secrets_to_hide))
-    web.WebJob.update = lambda job, **changes: original_update(job, **{k: redact(v, secrets_to_hide) if k in {"error", "stage"} else v for k, v in changes.items()})
+    web.WebJob.update = lambda job, **changes: original_update(job, **{k: redact(upload_log(v, media_mode) if k == "stage" else v, secrets_to_hide) if k in {"error", "stage"} else v for k, v in changes.items()})
 
     active, active_lock = set(), threading.Lock()
     class BoundThread(threading.Thread):

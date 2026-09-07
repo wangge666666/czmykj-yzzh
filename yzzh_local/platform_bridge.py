@@ -8,18 +8,24 @@ import secrets
 import tempfile
 import threading
 import time
+
+import requests
 from pathlib import Path
 
 from hybrid_shared import HybridError, digest, file_hash
 
 READ_OPERATIONS = frozenset({"video.get", "video.list", "assets.ListAssets", "assets.GetAsset",
-                             "assets.ListAssetGroups", "assets.GetAssetGroup"})
+                             "assets.ListAssetGroups"})
 WRITE_OPERATIONS = frozenset({"video.create", "image.generate", "analysis.create", "media.upload",
     "assets.CreateAsset", "assets.DeleteAsset", "assets.CreateAssetGroup", "assets.UpdateAssetGroup", "assets.DeleteAssetGroup"})
 
 PUBLIC_ERRORS = {
     "PLATFORM_SERVICE_UNAVAILABLE": "平台服务暂时不可用，请管理员检查部署；无需填写个人 API Key。",
     "PLATFORM_CONNECTION_UNCERTAIN": "平台请求回执尚未确认，已保留记录；请先核对已有任务，避免重复提交。",
+    "OPERATION_UNCERTAIN": "平台回执尚未确认，请先查询原请求；不会自动重新生成。",
+    "PROVIDER_UNCERTAIN": "平台回执尚未确认，请先查询原请求；不会自动重新生成。",
+    "OUTPUT_ARCHIVE_PENDING": "原任务已生成，成片转存暂未完成；请查询原请求，不要重新生成。",
+    "BILLING_RECONCILIATION_REQUIRED": "原结果已保存，账单暂未核对完成；请查询原请求，不要重新生成。",
     "PLATFORM_SETTINGS_MANAGED_BY_ADMIN": "服务配置由管理员统一管理，无需填写个人 API Key。",
     "ASSET_CONSENT_REQUIRED": "请在本次人物入库确认中勾选素材使用权与审核授权。",
     "INSUFFICIENT_BALANCE": "米哟账户余额不足，请充值后继续。",
@@ -173,6 +179,8 @@ class WorkerPlatformCallbacks:
                     raise WorkflowError("平台任务编号尚未确认，请保留记录核对；不会自动重新生成。")
             self.register_result(result)
             return result
+        except requests.RequestException:
+            raise WorkflowError("本地服务连接中断，平台回执尚未确认；请先查询原请求，不会自动重新发送。") from None
         finally:
             if network_id:
                 self.guard.callback("finish", id=network_id, ok=ok, task_id=task_id)

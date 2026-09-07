@@ -292,6 +292,7 @@
     const canRecoverWhite = isPrepare && job.status === "failed" && !job.has_white_model && !!job.task_id === false && (
       job.recovery_action === "resume_wardrobe_white_download"
       || (job.has_mosaic && job.error_category?.id === "network")
+      || (state.config?.plugin_service_mode === "platform" && job.has_mosaic && /平台回执|平台任务编号|成片转存|账单暂未/.test(job.error || ""))
     );
     $("#recoverWhiteBtn").classList.toggle("hidden", !canRecoverWhite);
     $("#recoverWhiteBtn").disabled = running;

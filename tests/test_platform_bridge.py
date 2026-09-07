@@ -378,6 +378,16 @@ class WorkerPlatformCallbackTests(unittest.TestCase):
         self.assertEqual(events[-1][1], {"id": "synthetic-network-id", "ok": True, "task_id": "cgt-fixture"})
         guard.control.post.assert_called_once()
 
+    def test_companion_timeout_is_uncertain_without_retry_or_private_error_text(self):
+        guard, events = self.guard()
+        guard.control.post.side_effect = requests.Timeout("synthetic-private-transport-detail")
+        callbacks = WorkerPlatformCallbacks(guard, SimpleNamespace(get=lambda: "synthetic-operation"))
+        with self.assertRaisesRegex(Exception, "平台回执尚未确认") as caught:
+            callbacks.rpc("video.create", {"model": "fixture"})
+        self.assertNotIn("synthetic-private", str(caught.exception))
+        guard.control.post.assert_called_once()
+        self.assertEqual(events[-1][1]["ok"], False)
+
     def test_worker_rejection_sends_no_platform_http(self):
         guard, events = self.guard(state="rejected")
         callbacks = WorkerPlatformCallbacks(guard, SimpleNamespace(get=lambda: "synthetic-operation"))
@@ -426,7 +436,7 @@ class PlatformServiceTests(unittest.TestCase):
         http.request.assert_called_once()
 
     def test_capability_flags_and_project_coverage_fail_closed(self):
-        for field, value in (("ready", "true"), ("projects", ["wardrobe"]), ("capabilities", {"video": "true"})):
+        for field, value in (("ready", "true"), ("projects", ["wardrobe"]), ("capabilities", {"video": "true"}), ("models", {"video":"fixture"})):
             with self.subTest(field=field):
                 http = Mock()
                 http.request.return_value = StreamResponse({**capabilities(), field: value})
