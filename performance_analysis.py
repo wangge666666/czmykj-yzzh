@@ -12,6 +12,19 @@ from workflow_core import DEFAULT_ARK_BASE_URL, ArkAPIError, ArkConnectionError,
 DEFAULT_PERFORMANCE_MODEL = "doubao-seed-2-0-lite-260215"
 
 
+class AnalysisOutputError(WorkflowError):
+    """A received analysis reply was unusable; never an uncertain POST."""
+
+
+def _without_trailing_commas(text: str) -> str:
+    # Repair punctuation only, outside strings. Never invent missing content.
+    return re.sub(
+        r'"(?:\\.|[^"\\])*"|(,)\s*(?=[}\]])',
+        lambda match: "" if match.group(1) else match.group(0),
+        text,
+    )
+
+
 PERFORMANCE_ANALYSIS_PROMPT = """你是一名视频表演连续性分析师。请同时理解视频画面与原始声音，按当前分镜的本地时间轴输出严格 JSON，不要输出 Markdown。
 
 目标不是把表演拆成孤立的肌肉动作，而是先判断人物在上下文中的完整表演语义，再用可见证据辅助描述。例如原片是“害羞而克制的微笑”，core_intent 必须保留这一整体语义；低头、回避视线、嘴角上扬只能写入 visible_evidence，不能把它误写成“紧张”“眯眼”或“轻笑”。无法确认时降低 confidence，不要擅自补全。
@@ -68,23 +81,25 @@ def _clean_text(value: Any, limit: int) -> str:
 
 
 def _json_from_text(text: str, *, analysis_label: str = "表演分析") -> dict[str, Any]:
-    clean = text.strip()
+    clean = text.strip().lstrip("\ufeff")
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", clean, re.DOTALL | re.IGNORECASE)
     if fenced:
         clean = fenced.group(1)
-    else:
+    elif clean and clean[0] not in '{["':
         start = clean.find("{")
         end = clean.rfind("}")
         if start >= 0 and end > start:
             clean = clean[start : end + 1]
     try:
-        value = json.loads(clean)
+        value = json.loads(_without_trailing_commas(clean))
+        if isinstance(value, str):
+            value = json.loads(_without_trailing_commas(value))
     except json.JSONDecodeError as exc:
-        raise WorkflowError(
+        raise AnalysisOutputError(
             f"{analysis_label}接口没有返回可解析的 JSON。"
         ) from exc
     if not isinstance(value, dict):
-        raise WorkflowError(f"{analysis_label}结果格式无效，顶层必须是 JSON 对象。")
+        raise AnalysisOutputError(f"{analysis_label}结果格式无效，顶层必须是 JSON 对象。")
     return value
 
 
@@ -176,6 +191,8 @@ def normalize_cast_continuity(
     shot_slot_counts: dict[int, int],
     max_characters: int = 4,
 ) -> dict[str, Any]:
+    if any(not isinstance(raw.get(key, []), list) for key in ("characters", "assignments")):
+        raise AnalysisOutputError("跨镜人物连续性分析结果格式无效，人物与槽位必须是列表。")
     max_characters = max(1, min(int(max_characters), 4))
     characters: list[dict[str, Any]] = []
     seen_characters: set[int] = set()
@@ -237,7 +254,7 @@ def normalize_cast_continuity(
     missing = sorted(expected - seen_slots)
     if missing:
         labels = "、".join(f"分镜{shot:02d}-P{slot}" for shot, slot in missing)
-        raise WorkflowError(f"跨镜人物连续性分析缺少槽位：{labels}。请重试或人工核对。")
+        raise AnalysisOutputError(f"跨镜人物连续性分析缺少槽位：{labels}。请在工作台核对人物对应。")
     return {
         "version": 1,
         "characters": sorted(characters, key=lambda item: item["character_id"]),
@@ -652,19 +669,30 @@ def build_white_model_performance_prompt(
 
 
 def _response_text(payload: dict[str, Any]) -> str:
+    if not isinstance(payload, dict):
+        raise AnalysisOutputError("分析接口返回的结果结构无效。")
+    if payload.get("status") in {"incomplete", "failed", "cancelled"}:
+        raise AnalysisOutputError("分析服务未返回完整结果，已保留完成的分析。")
     direct = payload.get("output_text")
     if isinstance(direct, str) and direct.strip():
         return direct
+    texts: list[str] = []
     for output in payload.get("output") or []:
         if not isinstance(output, dict):
+            continue
+        if output.get("type") not in {None, "message"} or output.get("role") not in {None, "assistant"}:
             continue
         for content in output.get("content") or []:
             if not isinstance(content, dict):
                 continue
+            if content.get("type") not in {None, "text", "output_text"}:
+                continue
             value = content.get("text") or content.get("output_text")
             if isinstance(value, str) and value.strip():
-                return value
-    raise WorkflowError("表演分析接口返回成功，但结果中没有文本内容。")
+                texts.append(value)
+    if texts:
+        return "".join(texts)
+    raise AnalysisOutputError("表演分析接口返回成功，但结果中没有文本内容。")
 
 
 class ArkPerformanceAnalyzer:
@@ -781,7 +809,7 @@ class ArkPerformanceAnalyzer:
         try:
             payload = response.json()
         except ValueError as exc:
-            raise WorkflowError("跨镜人物连续性分析接口返回了非 JSON 响应。") from exc
+            raise AnalysisOutputError("跨镜人物连续性分析接口返回了非 JSON 响应。") from exc
         raw = _json_from_text(
             _response_text(payload),
             analysis_label="跨镜人物连续性分析",

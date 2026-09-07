@@ -4,7 +4,10 @@ import unittest
 from unittest.mock import Mock
 
 from performance_analysis import (
+    AnalysisOutputError,
     ArkPerformanceAnalyzer,
+    _json_from_text,
+    _response_text,
     build_performance_prompt,
     build_white_model_performance_prompt,
     normalize_cast_continuity,
@@ -13,6 +16,32 @@ from performance_analysis import (
 
 
 class PerformanceAnalysisTests(unittest.TestCase):
+    def test_split_message_text_is_combined_without_reasoning(self) -> None:
+        payload = {"output": [
+            {"type": "reasoning", "content": [{"text": "推理内容不是结果"}]},
+            {"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": '{"assign'},
+                {"type": "output_text", "text": 'ments": []}'},
+            ]},
+        ]}
+        self.assertEqual(_json_from_text(_response_text(payload)), {"assignments": []})
+
+    def test_local_json_repairs_keep_string_evidence_unchanged(self) -> None:
+        text = '{"assignments": [], "evidence": "keep ,} and ,]",}'
+        fence = chr(96) * 3
+        for value in (text, fence + "JSON\n" + text + "\n" + fence):
+            self.assertEqual(_json_from_text(value), {
+                "assignments": [], "evidence": "keep ,} and ,]",
+            })
+        self.assertEqual(_json_from_text('"{\\"assignments\\": []}"'), {"assignments": []})
+
+    def test_truncated_ambiguous_and_incomplete_results_are_not_invented(self) -> None:
+        for text in ('{"assignments":[{"slot":1}', '{"a":1} {"b":2}', '[{"slot":1}]'):
+            with self.subTest(text=text), self.assertRaises(AnalysisOutputError):
+                _json_from_text(text)
+        with self.assertRaises(AnalysisOutputError):
+            _response_text({"status": "incomplete", "output_text": '{"assignments":[]}'})
+
     def test_cast_continuity_keeps_identity_when_people_change_sides(self) -> None:
         result = normalize_cast_continuity(
             {
