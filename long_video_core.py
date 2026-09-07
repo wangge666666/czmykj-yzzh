@@ -14,7 +14,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from workflow_core import WorkflowError, inspect_video, resolve_ffmpeg
+from workflow_core import WorkflowError, atomic_write_text, inspect_video, resolve_ffmpeg
 
 
 _FACE_CLASSIFIER: cv2.CascadeClassifier | None = None
@@ -1022,7 +1022,4 @@ def mux_original_audio(
 def save_shot_manifest(path: str | Path, payload: dict[str, Any]) -> Path:
     target = Path(path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_suffix(".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, target)
-    return target
+    return atomic_write_text(target, json.dumps(payload, ensure_ascii=False, indent=2))

@@ -9,6 +9,7 @@ import queue
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -2026,18 +2027,36 @@ def download_file(
     ) from last_error
 
 
+def atomic_write_text(path: Path, text: str) -> Path:
+    """Publish one complete file without sharing staging files across writers."""
+    temporary: Path | None = None
+    try:
+        # Keep staging on the target filesystem so replacement remains atomic.
+        # Each caller owns its temporary file, including across processes.
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+        return path
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def save_job_record(run_dir: Path, record: dict[str, Any]) -> Path:
     safe_record = dict(record)
     safe_record.pop("api_key", None)
     safe_record.pop("signed_url", None)
     path = run_dir / "job.json"
-    temporary = run_dir / "job.json.tmp"
-    temporary.write_text(
+    return atomic_write_text(
+        path,
         json.dumps(safe_record, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
     )
-    temporary.replace(path)
-    return path
 
 
 def video_info_dict(info: VideoInfo) -> dict[str, Any]:
