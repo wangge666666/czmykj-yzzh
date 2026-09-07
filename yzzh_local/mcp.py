@@ -21,23 +21,23 @@ def schema(properties=None, required=None):
 
 STRING = {"type": "string"}
 TOOLS = [
-    ("health", "检查衣装智换插件环境；不代表付费链路已验收。", schema()),
-    ("open_workbench", "默认打开原项目页面；单段辅助工具的计划预览/批准用 view=agent。不要自动批准。", schema({"view":{"type":"string","enum":["original","agent"]}})),
+    ("health", "检查衣装智换插件连接、版本、登录和实际模式；平台服务、真实生成及账单须分别验收。", schema()),
+    ("open_workbench", "默认打开三个项目共用的原工作台；平台模式查看账号与服务状态，无需填写供应商 Key。view=agent 仅显式 BYOK 历史辅助流程使用，不要自动批准。", schema({"view":{"type":"string","enum":["original","agent"]}})),
     ("original_analyze", "在原版长视频页面创建本地拆镜任务，不上传；之后用 original_status 查询，原页面可继续操作。", schema(
         {"path":STRING, "project":{"type":"string","enum":["virtual","real"]}, "manual_cuts":STRING}, ["path"])),
     ("original_status", "查询原版工作流任务；与单段辅助任务的 status 不同，不重复执行。", schema({"job_id":STRING}, ["job_id"])),
     ("list_projects", "列出本地衣装智换项目和处理状态。", schema()),
     ("import_video", "仅导入用户明确选择的本地视频；不上传。", schema({"path": STRING}, ["path"])),
     ("status", "查询持久化本地任务状态，不重复执行。", schema({"project_id": STRING}, ["project_id"])),
-    ("process", "本地分镜、打码或深度处理；返回后查询状态。缺模型时先请求安装许可。", schema(
+    ("process", "本地分镜、打码或深度处理；返回后查询状态。缺基础模型按已告知的安装/修复授权补齐，不在素材处理时隐式下载。", schema(
         {"project_id": STRING, "artifact_id": STRING, "operation": {"type": "string", "enum": ["split", "mosaic", "depth"]}},
         ["project_id", "artifact_id", "operation"])),
-    ("plan", "创建用户自带 Key 的单段参考重绘方案；本地准备，不上传媒体、不查询中央价格。模型可传空字符串使用本地设置。", schema(
+    ("plan", "仅显式 BYOK 历史兼容：本地准备单段重绘方案，不上传。平台模式拒绝此入口，应使用三个原项目工作流。模型可传空字符串使用旧本地设置。", schema(
         {"project_id": STRING, "artifact_id": STRING, "image_paths": {"type": "array", "items": STRING, "minItems": 1, "maxItems": 3},
          "prompt": STRING, "model": STRING, "resolution": STRING, "ratio": STRING, "duration": {"type": "integer", "minimum": 4, "maximum": 15}},
         ["project_id", "artifact_id", "image_paths", "prompt", "model"])),
-    ("submit", "提交已在工作台人工批准的方案，会上传素材并产生费用；未批准必须拒绝。", schema({"project_id": STRING}, ["project_id"])),
-    ("poll", "查询既有供应商任务，成功后取回输出；时间卡到期仍可取回，不会创建新生成。", schema({"project_id": STRING}, ["project_id"])),
+    ("submit", "仅显式 BYOK 历史兼容：提交已在辅助工作台人工批准的方案，会上传并产生供应商费用。平台模式拒绝此入口；不得代批或重发不明请求。", schema({"project_id": STRING}, ["project_id"])),
+    ("poll", "仅显式 BYOK 历史兼容：查询原供应商任务并取回输出，不创建新生成。平台模式使用原项目查询及只读平台回执，不走此入口。", schema({"project_id": STRING}, ["project_id"])),
     ("export", "把已登记产物复制到用户指定的新文件；不会覆盖已有文件。", schema(
         {"project_id": STRING, "artifact_id": STRING, "destination": STRING}, ["project_id", "artifact_id", "destination"])),
 ]
@@ -115,7 +115,7 @@ class Protocol:
             version = (message.get("params") or {}).get("protocolVersion")
             reply["result"] = {"protocolVersion": version if version in {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"} else "2025-06-18",
                 "serverInfo": {"name": "czmiyou-yzzh", "version": "0.5.0"}, "capabilities": {"tools": {}},
-                "instructions": "先查询项目状态。付费方案只能由用户在工作台批准；不要代填密码，不要绕过批准，不要重发结果不明的任务。"}
+                "instructions": "先查询 health 的登录、版本与实际模式及已有任务。默认平台模式三个项目共用米哟服务，管理员密钥留在服务器；不向用户索取 Key。上传和付费请求只能由用户逐次批准，不代填密码、不绕过批准、不重发结果不明任务。BYOK 仅显式历史兼容，不自动切换已有后台。"}
         elif method == "ping":
             reply["result"] = {}
         elif not self.initialized:

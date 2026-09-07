@@ -1,7 +1,7 @@
 {
   "name": "czmiyou-yzzh",
   "version": "0.5.0",
-  "description": "衣装智换 BYOK 预览：产品 4 时间卡授权，客户自带 Key 直接生成",
+  "description": "衣装智换平台接入预览：登录米哟，三项目共用平台服务和中央计费；共享密钥留在服务器，真实链路待验收",
   "skills": "./skills/",
   "mcpServers": "./workbuddy.mcp.json"
 }

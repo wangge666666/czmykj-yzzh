@@ -1,15 +1,15 @@
 {
   "name": "czmiyou-yzzh",
   "version": "0.5.0",
-  "description": "衣装智换 BYOK 预览：CZMIYOU 时间卡授权，客户自带 API Key 生成视频",
+  "description": "衣装智换平台接入预览：登录米哟，三个项目共用平台服务；管理员配置供应商密钥与计费",
   "author": {
     "name": "CZMIYOU"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "衣装智换",
-    "shortDescription": "时间卡授权，自带 Key 生成，本地任务可恢复",
-    "longDescription": "BYOK 开发预览：保留原创作界面，配置自己的方舟 Key；素材经确认后自动临时上传，TOS 可选。不需要独立视频中转服务，不扣中央余额；人物授权审核、供应商生成和双宿主验收分别验证。",
+    "shortDescription": "登录米哟，三项目共用平台服务，本地基础处理",
+    "longDescription": "平台接入开发预览：衣装智换、虚拟人物和写实虚拟人像共用登录、素材、通道与中央计费。供应商 Key 由管理员留在服务器，用户逐次确认上传及生成。含本地基础模型安装；服务器发布、真实生成和账单仍需分别验收。BYOK 仅显式历史兼容，不自动切换后台模式。",
     "developerName": "CZMIYOU",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
