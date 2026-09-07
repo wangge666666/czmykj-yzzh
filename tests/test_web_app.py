@@ -262,7 +262,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="confirmCast"', html)
         self.assertIn("0人重绘新场景；1人走单人流程；2–4人自动走多人流程", html)
         self.assertIn('/static/long_video.js', html)
-        self.assertIn('long_video.js?v=20260814-06', html)
+        self.assertIn('long_video.js?v=20260907-analysis-recovery-1', html)
         self.assertIn('long_video.css?v=20260812-02', html)
         self.assertIn('id="downloadCenter"', html)
         self.assertIn('id="whiteShotDownloadList"', html)
@@ -291,7 +291,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="realPersonAuthorized"', html)
         self.assertIn('id="prepareRealActorsBtn"', html)
         self.assertNotIn('id="sketchPrompt"', html)
-        self.assertIn('/static/real_long_video.js?v=20260823-02', html)
+        self.assertIn('/static/real_long_video.js?v=20260907-analysis-recovery-1', html)
         self.assertIn('<select id="resolution"><option>480p</option><option selected>720p</option><option>1080p</option>', html)
         self.assertIn('value="doubao-seedance-2-5-260628">Seedance 2.5', html)
         self.assertIn('id="ratioHint"', html)
@@ -348,7 +348,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("处理分镜 ${String(pendingCompositionShots[0])", script)
         self.assertNotIn("generationBlocked || compositionApprovalBlocked", script)
         real_script.close()
-        self.assertNotIn('/static/long_video.js?v=20260814-06', html)
+        self.assertNotIn('/static/long_video.js?v=20260907-analysis-recovery-1', html)
         response.close()
 
     def test_real_character_library_creates_aigc_group_and_manages_it(self) -> None:
