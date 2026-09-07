@@ -409,7 +409,7 @@
       <p class="status" role="status"></p>
       <div class="settings-view">
       <p class="login-destination"></p>
-      <div class="unified-login"><p>使用原来的 CZMIYOU 统一登录页。登录后，在「我的应用」点击「米哟衣装智换」即可进入本地插件。</p><a class="login-link" href="https://mch39t7vkw.coze.site">前往 CZMIYOU 统一登录 →</a></div>
+      <div class="unified-login"><p>使用原来的 CZMIYOU 统一登录页。登录后，在「我的应用」点击「米哟无限复刻」即可进入本地插件。</p><a class="login-link" href="https://mch39t7vkw.coze.site">前往 CZMIYOU 统一登录 →</a></div>
       <form class="login" hidden><label>账号<input name="username" required autocomplete="username"></label><label>密码<input name="password" type="password" required autocomplete="current-password"></label><label>登录身份<select name="role" required><option value="" selected disabled>请选择与账号中心一致的身份</option><option value="customer">客户</option><option value="staff">员工</option><option value="agent">代理</option><option value="partner">校企合作</option><option value="admin">管理员</option></select></label><button>登录 CZMIYOU</button></form>
       <form class="settings" hidden><h3>我的模型服务</h3><p class="configured"></p><div class="fields"></div>
         <div class="upload-info"><b>素材由插件自动上传</b><p>不用建桶、不用复制公网地址。上传前会确认素材去向；审核通过的人物 ID 自动复用。</p></div>

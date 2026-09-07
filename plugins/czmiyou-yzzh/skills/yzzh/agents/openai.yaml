@@ -1,4 +1,4 @@
 interface:
-  display_name: "衣装智换"
+  display_name: "米哟无限复刻"
   short_description: "登录米哟，三个项目共用平台服务；本地分镜、打码与深度参考"
-  default_prompt: "使用 $yzzh 检查衣装智换插件的连接、版本、登录和服务模式，再打开工作台查看项目状态。先不要上传素材或批准付费生成。"
+  default_prompt: "使用 $yzzh 检查米哟无限复刻插件的连接、版本、登录和服务模式，再打开项目选择首页查看状态。先不要上传素材或批准付费生成。"

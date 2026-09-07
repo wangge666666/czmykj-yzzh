@@ -1,19 +1,19 @@
 {
   "name": "czmiyou-yzzh",
   "version": "0.5.0",
-  "description": "衣装智换平台接入预览：登录米哟，三个项目共用平台服务；管理员配置供应商密钥与计费",
+  "description": "米哟无限复刻平台接入预览：登录米哟，三个项目共用平台服务；管理员配置供应商密钥与计费",
   "author": {
     "name": "CZMIYOU"
   },
   "skills": "./skills/",
   "interface": {
-    "displayName": "衣装智换",
+    "displayName": "米哟无限复刻",
     "shortDescription": "登录米哟，三项目共用平台服务，本地基础处理",
     "longDescription": "平台接入开发预览：衣装智换、虚拟人物和写实虚拟人像共用登录、素材、通道与中央计费。供应商 Key 由管理员留在服务器，用户逐次确认上传及生成。含本地基础模型安装；服务器发布、真实生成和账单仍需分别验收。BYOK 仅显式历史兼容，不自动切换后台模式。",
     "developerName": "CZMIYOU",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
-    "defaultPrompt": ["打开衣装智换工作台", "查看衣装智换任务进度", "把我选择的视频分镜并预览"]
+    "defaultPrompt": ["打开米哟无限复刻项目中心", "查看衣装智换任务进度", "把我选择的视频分镜并预览"]
   },
   "mcpServers": "./.mcp.json"
 }

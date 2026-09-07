@@ -89,7 +89,7 @@ class PortalLauncherTests(unittest.TestCase):
         self.assertIn('javascript',response.content_type)
         response.close()
         for fragment in ('event.origin !== loginOrigin','event.source !== parent','event.data.state !== state',
-                         "location.replace('/projects/wardrobe')",'window.opener = null'):
+                         "location.replace('/')",'window.opener = null'):
             self.assertIn(fragment,source)
         self.assertNotIn('localStorage',source)
         self.assertNotIn('?token=',source)
