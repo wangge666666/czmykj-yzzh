@@ -81,6 +81,12 @@ def library_status(data, mode):
 def upload_log(message, mode):
     """Correct legacy retention/deletion language without changing workflow UI."""
     text = str(message)
+    if mode == "platform":
+        if "删除" in text and "临时" in text:
+            return "本次素材使用已结束，平台保留可恢复记录；未自动删除云端素材。"
+        if "临时" in text and ("上传" in text or "地址" in text):
+            return "正在使用米哟平台素材服务处理当前步骤。"
+        return text
     if mode == "temporary":
         if text in {"免费临时深度视频已立即删除。", "免费临时深度视频已删除。"}:
             return "临时素材使用已结束；Litterbox 源文件由服务按期限清理，插件未执行提前删除。"

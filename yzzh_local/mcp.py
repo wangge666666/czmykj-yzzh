@@ -76,7 +76,7 @@ def ensure_daemon():
     except Exception:
         health = None
     if health is not None:
-        if health.get("version") != "0.5.0" or health.get("mode") != "byok":
+        if health.get("version") != "0.5.0" or health.get("mode") not in {"byok", "platform"}:
             raise HybridError("LOCAL_DAEMON_VERSION_MISMATCH_RESTART", 409)
         return
     root = default_root()

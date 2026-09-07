@@ -603,7 +603,7 @@
   async function load() {
     try {
       state.config = await api("/api/config");
-      $("#arkBadge").textContent = state.config.ark_ready ? "API 已配置" : "API 未配置";
+      $("#arkBadge").textContent = state.config.plugin_service_mode === "platform" ? (state.config.ark_ready ? "平台服务已就绪" : "平台服务待配置") : (state.config.ark_ready ? "API 已配置" : "API 未配置");
       $("#arkBadge").classList.toggle("ready", !!state.config.ark_ready);
       updateMode();
     } catch (error) { toast(error.message, true); updateMode(); }

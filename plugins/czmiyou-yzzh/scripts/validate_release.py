@@ -9,7 +9,7 @@ EXPECTED_FILES = {
     'scripts/start_local.py', 'scripts/register_launcher.py', 'scripts/setup.py', 'scripts/launch.py', 'scripts/host_config.py', 'scripts/validate_release.py',
     'runtime/hybrid_shared.py', 'runtime/workflow_core.py', 'runtime/long_video_core.py',
     'runtime/face_mosaic.py', 'runtime/depth_video.py', 'runtime/yzzh_local/__init__.py',
-    'runtime/yzzh_local/account.py', 'runtime/yzzh_local/settings.py', 'runtime/yzzh_local/provider.py', 'runtime/yzzh_local/platform.py',
+    'runtime/yzzh_local/account.py', 'runtime/yzzh_local/settings.py', 'runtime/yzzh_local/provider.py', 'runtime/yzzh_local/platform.py', 'runtime/yzzh_local/platform_service.py', 'runtime/yzzh_local/platform_bridge.py',
     'runtime/yzzh_local/launcher.py', 'runtime/yzzh_local/web/launch.js', 'runtime/yzzh_local/media.py', 'runtime/yzzh_local/original_media.py',
     'runtime/yzzh_local/runtime.py', 'runtime/yzzh_local/app.py', 'runtime/yzzh_local/mcp.py',
     'runtime/yzzh_local/web/index.html', 'runtime/yzzh_local/web/app.js', 'runtime/yzzh_local/web/style.css',

@@ -72,7 +72,7 @@ class OriginalTests(unittest.TestCase):
             original = (SOURCE / 'web' / name).read_text()
             self.assertIn('<script src="/_plugin/portal.js"></script>', html)
             import re
-            restored = re.sub(r'<meta name="yzzh-owner"[^>]*><meta name="yzzh-context"[^>]*><script src="/_plugin/portal.js"></script>', '', html)
+            restored = re.sub(r'<meta name="yzzh-owner"[^>]*><meta name="yzzh-context"[^>]*><meta name="yzzh-service-mode"[^>]*><script src="/_plugin/portal.js"></script>', '', html)
             self.assertEqual(restored, original)
         for file in (SOURCE / 'web').iterdir():
             if file.suffix in {'.css','.js'}:

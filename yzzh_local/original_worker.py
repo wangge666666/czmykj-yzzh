@@ -73,8 +73,9 @@ class RemoteImageError(ValueError):
 
 class RemoteImages:
     """Private URL registry: signed character thumbnails never reach the UI."""
-    def __init__(self, bucket):
+    def __init__(self, bucket, platform_urls=None):
         self.bucket, self.urls, self.ids = bucket, {}, {}
+        self.platform_urls = platform_urls if platform_urls is not None else set()
 
     def register(self, value):
         if isinstance(value, list):
@@ -85,7 +86,7 @@ class RemoteImages:
         if str(result.get("uri", "")).startswith("asset://") and result.get("url"):
             url = result["url"]
             try:
-                if "TOS" not in destination(url, self.bucket):
+                if url not in self.platform_urls and "TOS" not in destination(url, self.bucket):
                     raise ValueError()
                 if url not in self.ids:
                     if len(self.urls) >= 5000:
@@ -132,6 +133,7 @@ class RemoteImages:
 class NetworkGuard:
     def __init__(self, config, raw_send=None):
         self.config = config
+        self.platform_urls = set()
         self.raw_send = raw_send or requests.Session.send
         self.control = requests.Session()
         self.control.trust_env = False
@@ -156,7 +158,15 @@ class NetworkGuard:
 
     def send(self, session, prepared, **kwargs):
         bucket = self.config["values"].get("TOS_BUCKET", "")
-        target = destination(prepared.url, bucket)
+        is_platform = "__platform__" in self.config["values"]
+        if is_platform and prepared.method not in {"GET", "HEAD"}:
+            raise RuntimeError("平台模式的云端操作必须通过已确认的平台接口，不能直连供应商。")
+        if is_platform and prepared.url in self.platform_urls:
+            if any(key.lower() in {"authorization", "cookie", "x-api-key"} for key in prepared.headers):
+                raise RuntimeError("素材读取不能携带账号或模型凭据。")
+            target = "平台已登记素材"
+        else:
+            target = destination(prepared.url, bucket)
         if target.startswith("Litterbox"):
             if upload_mode(self.config["values"]) != "temporary":
                 raise RuntimeError("当前没有选择临时素材托管，已阻止上传。")
@@ -372,6 +382,12 @@ def configure(config):
             os.environ[key] = values[key]
     if values.get("ARK_MODEL"):
         os.environ["ARK_VIDEO_MODEL"] = values["ARK_MODEL"]
+    if isinstance(values.get("__platform__"), dict):
+        models = values["__platform__"].get("models", {})
+        for field, variable in (("video", "ARK_VIDEO_MODEL"), ("image", "ARK_IMAGE_MODEL"), ("analysis", "ARK_PERFORMANCE_MODEL")):
+            model = models.get(field)
+            if isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", model):
+                os.environ[variable] = model
     # Imports are ordered intentionally: account data roots are bound before
     # the original app computes its workspace/cache/profile paths.
     import workflow_core as core
@@ -388,7 +404,8 @@ def configure(config):
         raise core.WorkflowError("插件使用已选择的自动上传与 API 通道；不自动开启公网隧道或浏览器代操作。")
     core.TemporaryPublicTunnel.start = unsupported
     from yzzh_local.original_media import install_media, upload_log
-    media_mode = install_media(web, core, values)
+    platform_capabilities = values.get("__platform__")
+    media_mode = "platform" if isinstance(platform_capabilities, dict) else install_media(web, core, values)
     web.SEEDANCE_WEB.launch = unsupported
     web.SEEDANCE_WEB.generate = unsupported
     # Prevent implicit model downloads. Source installs with explicit existing
@@ -449,9 +466,30 @@ def configure(config):
     web.threading.Thread = BoundThread
 
     guard = NetworkGuard(config)
+    if media_mode == "platform":
+        from yzzh_local.platform import PlatformTransport, install_platform
+        from yzzh_local.platform_bridge import WorkerPlatformCallbacks
+        def register_platform_media(result):
+            if isinstance(result, list):
+                for item in result:
+                    register_platform_media(item)
+            elif isinstance(result, dict):
+                for name, value in result.items():
+                    if name in {"url", "signed_url", "video_url", "URL", "Url", "ImageUrl", "CoverUrl", "ThumbnailUrl", "MediaUrl"} and isinstance(value, str):
+                        try:
+                            parsed = urlsplit(value)
+                            if (parsed.scheme == "https" and parsed.hostname and not parsed.username and not parsed.password
+                                    and parsed.port in {None, 443} and len(guard.platform_urls) < 5000):
+                                guard.platform_urls.add(value)
+                        except ValueError:
+                            pass
+                    else:
+                        register_platform_media(value)
+        callbacks = WorkerPlatformCallbacks(guard, CURRENT, register_platform_media)
+        install_platform(web, core, PlatformTransport(callbacks.rpc, callbacks.upload), platform_capabilities)
     requests.Session.send = lambda session, prepared, **kwargs: guard.send(session, prepared, **kwargs)
     from flask import request, jsonify, Response
-    remote_images = RemoteImages(values.get("TOS_BUCKET", ""))
+    remote_images = RemoteImages(values.get("TOS_BUCKET", ""), guard.platform_urls)
     @web.app.before_request
     def private_ingress():
         import hmac
@@ -496,14 +534,21 @@ def configure(config):
             data = response.get_json(silent=True)
             if isinstance(data, (dict, list)):
                 if request.path == "/api/config" and isinstance(data, dict):
-                    data.update(temporary_upload_ready=media_mode == "temporary", temporary_tunnel_ready=False,
-                                ark_assets_upload_ready=web.ark_assets_configured() and (media_mode == "temporary" or web.TosMediaStore.configured()),
-                                plugin_upload_mode=media_mode, plugin_upload_notice=TEMP_NOTICE if media_mode == "temporary" else "自己的北京 TOS",
+                    data.update(temporary_upload_ready=media_mode in {"temporary", "platform"}, temporary_tunnel_ready=False,
+                                ark_assets_upload_ready=web.ark_assets_configured() and (media_mode in {"temporary", "platform"} or web.TosMediaStore.configured()),
+                                plugin_upload_mode=media_mode, plugin_upload_notice=("米哟平台素材服务" if media_mode == "platform" else TEMP_NOTICE if media_mode == "temporary" else "自己的北京 TOS"),
                                 plugin_interface="original", plugin_audio="optional_offline_extension")
+                    if media_mode == "platform":
+                        data.update(ark_ready=platform_capabilities.get("ready") is True,
+                                    temporary_upload_ready=(platform_capabilities.get("ready") is True and platform_capabilities.get("capabilities", {}).get("media") is True),
+                                    plugin_service_mode="platform")
                 if "character-library" in request.path and isinstance(data, dict):
                     if "groups" in data and "assets" in data:
                         from yzzh_local.original_media import library_status
-                        data = library_status(data, media_mode)
+                        if media_mode == "platform":
+                            data.update(storage_mode="platform", message="人物库由米哟平台提供，按账号与通道管理；无需填写 AK/SK。" if data.get("configured") else "平台人物服务尚未就绪，请联系管理员配置。")
+                        else:
+                            data = library_status(data, media_mode)
                     elif data.get("asset_id") and data.get("status") == "Processing" and media_mode == "temporary":
                         data["message"] = "人物素材已提交审核，状态变为 Active 后使用对应人物 ID；Litterbox 源文件申请保存 72 小时，插件不能延长或提前删除。"
                 response.set_data(json.dumps(redact(remote_images.register(data), secrets_to_hide), ensure_ascii=False))

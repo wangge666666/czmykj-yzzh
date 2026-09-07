@@ -62,7 +62,8 @@ async function fixture(options = {}) {
     '.unified-login a', '.tos-fields', '.close', '.fields', '.identity-fields',
     '.model-fields', '.logout', '.readiness-status', '.readiness-checks', '.readiness-check',
     '.settings-view', '.approval-view', '.panel-title', '.billing-info', '.approval-explanation',
-    '.platform-status-view', '.platform-status', '.platform-capabilities', '.platform-balance', '.platform-logout']) selectors.set(selector, element());
+    '.platform-status-view', '.platform-status', '.platform-capabilities', '.platform-balance', '.platform-logout',
+    '.agent-workbench-link']) selectors.set(selector, element());
   const form = selectors.get('.settings');
   form.elements = {MEDIA_UPLOAD_MODE: Object.assign(element(), {name: 'MEDIA_UPLOAD_MODE'})};
   for (const selector of ['.fields', '.identity-fields', '.model-fields', '.tos-fields']) {
@@ -86,6 +87,7 @@ async function fixture(options = {}) {
     ['#modeInput', Object.assign(element(), {value: 'clothing'})],
     ['meta[name="yzzh-owner"]', {content: '71'}],
     ['meta[name="yzzh-context"]', {content: 'fixture-context'}],
+    ['meta[name="yzzh-service-mode"]', {content: options.serviceMode || options.initialSettings?.mode || 'byok'}],
   ]);
   const body = element();
   const document = {
@@ -157,7 +159,7 @@ async function fixture(options = {}) {
     throw Error(`Unexpected request: ${method} ${url.pathname}`);
   };
   class Storage {
-    constructor() { this.values = new Map(); }
+    constructor() { this.values = new Map(Object.entries(options.initialStorage || {})); }
     getItem(key) { return this.values.get(key) ?? null; }
     setItem(key, value) { this.values.set(key, String(value)); }
     removeItem(key) { this.values.delete(key); }
@@ -175,7 +177,7 @@ async function fixture(options = {}) {
   listeners.get('DOMContentLoaded')();
   await settle();
   return {
-    badge, form, calls, navigations, shadow, selectors,
+    badge, form, calls, navigations, shadow, selectors, storage: new Storage(),
     state: () => publicState,
     approvals: () => approvals,
     releaseState() { assert.equal(typeof releaseState, 'function'); releaseState(); },
@@ -201,6 +203,7 @@ async function fixture(options = {}) {
 
 test('saving Key updates the existing badge before returning without resetting creation inputs', async () => {
   const f = await fixture();
+  assert.equal(f.selectors.get('.agent-workbench-link').hidden, false);
   assert.equal(f.badge.classList.contains('ready'), false);
   await f.save();
   f.selectors.get('.close').onclick();
@@ -473,6 +476,7 @@ test('all three project pages show a shared platform account panel without reque
     assert.equal(f.selectors.get('.panel-title').textContent, '账号与服务状态');
     assert.equal(f.form.hidden, true);
     assert.equal(f.selectors.get('.platform-status-view').hidden, false);
+    assert.equal(f.selectors.get('.agent-workbench-link').hidden, true);
     assert.equal(f.badge.textContent, '平台服务已就绪');
     assert.equal(f.badge.classList.contains('ready'), true);
     assert.match(f.selectors.get('.platform-status').textContent, /三个项目共用平台/);
@@ -624,5 +628,40 @@ test('platform character submission requires an explicit unchecked consent for e
     owner: 71, session: 'fixture-context', id: 'fixture-asset-two', approved: false,
   });
   assert.equal(f.calls.filter(call => call.path === '/api/settings').length, 0);
+  f.assertPreserved();
+});
+
+test('platform drafts use a separate namespace before any old BYOK draft can be restored', async () => {
+  const initialStorage = {
+    'depthflowWardrobeDraft': 'historical-unscoped-draft',
+    'yzzh.71.depthflowWardrobeDraft': 'byok-owner-draft',
+    'yzzh.71.platform.depthflowWardrobeDraft': 'platform-owner-draft',
+    'unrelated-preference': 'preserved',
+  };
+  const f = await fixture({serviceMode: 'platform', initialSettings: platformSettings(), initialStorage});
+  assert.equal(f.storage.getItem('depthflowWardrobeDraft'), 'platform-owner-draft');
+  f.storage.setItem('depthflowWardrobeDraft', 'new-platform-draft');
+  assert.equal(f.storage.values.get('yzzh.71.platform.depthflowWardrobeDraft'), 'new-platform-draft');
+  assert.equal(f.storage.values.get('yzzh.71.depthflowWardrobeDraft'), 'byok-owner-draft');
+  assert.equal(f.storage.values.get('depthflowWardrobeDraft'), 'historical-unscoped-draft');
+  f.storage.removeItem('depthflowWardrobeDraft');
+  assert.equal(f.storage.getItem('depthflowWardrobeDraft'), null, 'Platform must not fall back to BYOK or unscoped saved tasks');
+  assert.equal(f.storage.values.get('yzzh.71.depthflowWardrobeDraft'), 'byok-owner-draft');
+  assert.equal(f.storage.getItem('unrelated-preference'), 'preserved');
+  f.assertPreserved();
+});
+
+test('explicit BYOK mode preserves the existing owner namespace and leaves platform drafts intact', async () => {
+  const f = await fixture({serviceMode: 'byok', initialStorage: {
+    'yzzh.71.depthflowLongDraft': 'existing-byok-draft',
+    'yzzh.71.platform.depthflowLongDraft': 'preserved-platform-draft',
+  }});
+  assert.equal(f.storage.getItem('depthflowLongDraft'), 'existing-byok-draft');
+  f.storage.setItem('depthflowLongDraft', 'updated-byok-draft');
+  assert.equal(f.storage.values.get('yzzh.71.depthflowLongDraft'), 'updated-byok-draft');
+  assert.equal(f.storage.values.get('yzzh.71.platform.depthflowLongDraft'), 'preserved-platform-draft');
+  f.storage.removeItem('depthflowLongDraft');
+  assert.equal(f.storage.getItem('depthflowLongDraft'), null);
+  assert.equal(f.storage.values.get('yzzh.71.platform.depthflowLongDraft'), 'preserved-platform-draft');
   f.assertPreserved();
 });

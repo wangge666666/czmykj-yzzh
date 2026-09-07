@@ -1,7 +1,7 @@
 """Authenticated bridge to the unchanged original UI and per-account engine.
 
-Provider bytes stay in the worker. Only redacted approval metadata crosses
-back to the companion. No central generation/billing endpoint is involved.
+Historical BYOK calls stay in their worker. Platform workers receive public
+capabilities only; the companion binds approved requests to the central account.
 """
 from __future__ import annotations
 
@@ -89,7 +89,13 @@ class OriginalBridge:
             raise HybridError("ACCOUNT_CHANGED_REFRESH", 409)
         if require_license:
             rt._verify()
-        values, revision = rt.settings.load(rt.account["user_id"])
+        if getattr(rt, "mode", "byok") == "platform":
+            capabilities = rt.provider_settings()
+            values = {"__platform__": capabilities}
+            revision = hashlib.sha256(json.dumps({"mode": "platform", "capabilities": capabilities.get("capabilities"),
+                "models": capabilities.get("models"), "ready": capabilities.get("ready")}, sort_keys=True).encode()).hexdigest()
+        else:
+            values, revision = rt.settings.load(rt.account["user_id"])
         return rt.account["user_id"], values, revision
 
     def binding(self, operation, license=False):
@@ -109,6 +115,10 @@ class OriginalBridge:
             worker["process"].terminate()
             worker["process"].wait(timeout=5)
         account_root = self.root / str(owner)
+        if "__platform__" in values:
+            # Never resume old BYOK submissions under shared platform credentials.
+            account_root = account_root / "platform"
+            account_root.parent.mkdir(mode=0o700, exist_ok=True)
         account_root.mkdir(mode=0o700, exist_ok=True)
         if account_root.is_symlink():
             raise HybridError("UNSAFE_ACCOUNT_DIRECTORY")
@@ -135,7 +145,7 @@ class OriginalBridge:
             process.wait(timeout=5)
             process.stdout.close()
             raise HybridError("ORIGINAL_ENGINE_START_FAILED", 503) from None
-        worker = {"process": process, "key": key, "revision": revision, "url": f"http://127.0.0.1:{worker_port}"}
+        worker = {"process": process, "key": key, "revision": revision, "url": f"http://127.0.0.1:{worker_port}", "root": str(account_root)}
         self.workers[owner] = worker
         return worker
 
@@ -152,6 +162,8 @@ class OriginalBridge:
 
     def _record(self, item):
         root = self.root / str(item["owner"]) / "network"
+        if item.get("service_mode") == "platform":
+            root = root / "platform"
         root.mkdir(mode=0o700, exist_ok=True, parents=True)
         target = root / (item["id"] + ".json")
         temporary = root / (item["id"] + ".tmp")
@@ -163,7 +175,10 @@ class OriginalBridge:
         os.replace(temporary, target)
 
     def unresolved(self, owner):
-        for path in (self.root / str(owner) / "network").glob("*.json"):
+        root = self.root / str(owner) / "network"
+        if getattr(self.runtime, "mode", "byok") == "platform":
+            root = root / "platform"
+        for path in root.glob("*.json"):
             try:
                 item = json.loads(path.read_text())
             except (OSError, ValueError):
@@ -207,6 +222,7 @@ class OriginalBridge:
                 key = uuid.uuid4().hex
                 item = {"id": key, "operation": data["operation"], "owner": operation["owner"],
                         "source": operation["path"], "summary": summary, "state": "awaiting_approval", "created": time.time()}
+                item["service_mode"] = getattr(self.runtime, "mode", "byok")
                 self.pending[key] = item
                 self._record(item)
                 return {"id": key}
@@ -223,6 +239,10 @@ class OriginalBridge:
                 self._record(item)
                 return {"state": "send_once"}
             return {"state": item["state"]}
+
+    def platform_request(self, data, supplied):
+        from .platform_bridge import platform_request
+        return platform_request(self, data, supplied)
 
     def approvals(self, owner, session):
         with self.runtime.lock:
@@ -277,6 +297,10 @@ class OriginalBridge:
             if not item or item["state"] != "awaiting_approval" or type(data.get("approved")) is not bool:
                 raise HybridError("NETWORK_APPROVAL_NOT_FOUND", 404)
             self.binding(self.operations[item["operation"]], license=data["approved"])
+            if data["approved"] and item["summary"].get("operation") == "assets.CreateAsset":
+                if data.get("compliance_confirmed") is not True:
+                    raise HybridError("ASSET_CONSENT_REQUIRED", 409)
+                item["compliance_confirmed"] = True
             item["state"] = "approved" if data["approved"] else "rejected"
             self._record(item)
             return {"state": item["state"]}
@@ -337,7 +361,7 @@ def install_original(app, runtime, port):
         with runtime.lock:
             owner = runtime.account["user_id"] if runtime.account else ""
             binding = runtime.session_revision
-        html = html.replace("</head>", f'<meta name="yzzh-owner" content="{owner}"><meta name="yzzh-context" content="{binding}"><script src="/_plugin/portal.js"></script></head>', 1)
+        html = html.replace("</head>", f'<meta name="yzzh-owner" content="{owner}"><meta name="yzzh-context" content="{binding}"><meta name="yzzh-service-mode" content="{runtime.mode}"><script src="/_plugin/portal.js"></script></head>', 1)
         return Response(html, mimetype="text/html")
     app.view_functions["index"] = page
     for index, path in enumerate(PAGES):
@@ -351,6 +375,10 @@ def install_original(app, runtime, port):
     @app.route("/_plugin/engine", methods=["POST"])
     def network():
         return jsonify(bridge.network(request.get_json(), request.headers.get("X-Engine-Key", "")))
+
+    @app.post("/_plugin/platform")
+    def platform():
+        return jsonify({"result": bridge.platform_request(request.get_json(), request.headers.get("X-Engine-Key", ""))})
 
     @app.get("/_plugin/approvals")
     def approvals():

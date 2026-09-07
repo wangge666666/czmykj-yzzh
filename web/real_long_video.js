@@ -2573,8 +2573,9 @@ async function loadConfig() {
     $("#model").value = modelOptions.some((item) => item.model === config.model) ? config.model : (modelOptions[0]?.model || config.model);
     syncFinalModelOptions("720p");
     $("#imageModel").value = config.image_model;
-    badge("#arkBadge", config.ark_ready, "API 已配置", "API 未配置");
-    badge("#channelBadge", config.temporary_upload_ready, "免费临时通道可用", "临时通道不可用");
+    const platformMode = config.plugin_service_mode === "platform";
+    badge("#arkBadge", config.ark_ready, platformMode ? "平台服务已就绪" : "API 已配置", platformMode ? "平台服务待配置" : "API 未配置");
+    badge("#channelBadge", config.temporary_upload_ready, platformMode ? "平台素材服务可用" : "免费临时通道可用", platformMode ? "平台素材服务待配置" : "临时通道不可用");
     const activeWorkspace = window.DepthFlowWorkspaces?.active();
     const latest = activeWorkspace?.job_id
       ? await api(`/api/jobs/${activeWorkspace.job_id}`)

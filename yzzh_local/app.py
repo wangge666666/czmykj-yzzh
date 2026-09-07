@@ -37,6 +37,10 @@ def create_app(runtime, session_key, port):
             if not request.is_json or (request.content_length or 0) > 20000:
                 raise HybridError("INVALID_ENGINE_REQUEST", 400)
             return None  # An independent worker credential is checked by the bridge.
+        if request.path == "/_plugin/platform":
+            if not request.is_json or (request.content_length or 0) > 24 * 1024 * 1024:
+                raise HybridError("INVALID_ENGINE_REQUEST", 400)
+            return None  # Checked against the bound worker and exact approved body.
         supplied = request.headers.get("X-Yzzh-Session") or request.cookies.get("yzzh_session", "")
         if not hmac.compare_digest(supplied, session_key):
             raise HybridError("LOCAL_SESSION_REQUIRED", 401)
@@ -150,6 +154,9 @@ def main():
     parser.add_argument("--port", type=int, default=int(os.getenv("YZZH_PORT", "7871")))
     parser.add_argument("--login-url", default=os.getenv("YZZH_LOGIN_URL", "").strip() or DEFAULT_LOGIN_URL)
     parser.add_argument("--development", action="store_true", help="Allow a loopback-only account fixture (tests only)")
+    parser.add_argument("--mode", choices=("platform", "byok"), default="platform",
+                        help="Platform for all three projects; byok is explicit historical-task compatibility")
+    parser.add_argument("--platform-url", default=None, help="Operator-configured creation-center origin")
     args = parser.parse_args()
     root = Path(args.data_dir).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -162,7 +169,7 @@ def main():
     else:
         import fcntl
         fcntl.flock(process_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    runtime = Runtime(root, args.login_url, development=args.development)
+    runtime = Runtime(root, args.login_url, development=args.development, mode=args.mode, platform_url=args.platform_url)
     session_key = secrets.token_urlsafe(32)
     app = create_app(runtime, session_key, args.port)
     # Bind before publishing connection metadata so a failed start cannot replace a live server.

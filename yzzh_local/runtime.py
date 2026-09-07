@@ -20,11 +20,19 @@ BUSY = {"processing", "submitting", "submit_uncertain", "provider_running", "dow
 
 
 class Runtime:
-    def __init__(self, root, login_url=DEFAULT_LOGIN_URL, *, development=False, account_client=None, provider_factory=ArkProvider):
+    def __init__(self, root, login_url=DEFAULT_LOGIN_URL, *, development=False, account_client=None, provider_factory=ArkProvider,
+                 mode="byok", platform_url=None, platform_client=None):
         self.store = Store(root)
         self.auth = account_client or AccountClient(login_url, development=development)
         self.login_url = self.auth.login_url
         self.settings = Settings(self.store.root)
+        if mode not in {"byok", "platform"}:
+            raise HybridError("INVALID_SERVICE_MODE")
+        self.mode = mode
+        self.platform = platform_client
+        if mode == "platform" and self.platform is None:
+            from .platform_service import PlatformService, DEFAULT_PLATFORM_URL
+            self.platform = PlatformService(platform_url or DEFAULT_PLATFORM_URL, development=development)
         self.provider_factory = provider_factory
         self.token = ""
         self.account = None
@@ -57,7 +65,10 @@ class Runtime:
     def provider_settings(self):
         if not self.account:
             return None
-        result = self.settings.public(self.account["user_id"])
+        if self.mode == "platform":
+            result = self.platform.capabilities(self.token, self.account["user_id"], self.session_revision)
+        else:
+            result = self.settings.public(self.account["user_id"])
         result.update(owner_id=self.account["user_id"], session_revision=self.session_revision)
         return result
 
@@ -66,6 +77,8 @@ class Runtime:
             self._verify(require_license=False)
             if type(expected_owner) is not int or expected_owner != self.account["user_id"] or expected_session != self.session_revision:
                 raise HybridError("SETTINGS_ACCOUNT_CHANGED_REFRESH", 409)
+            if self.mode == "platform":
+                raise HybridError("PLATFORM_SETTINGS_MANAGED_BY_ADMIN", 409)
             return self.settings.clear(self.account["user_id"]) if clear else self.settings.save(self.account["user_id"], changes)
 
     def login(self, username, password, role="customer"):
@@ -104,9 +117,11 @@ class Runtime:
 
     def health(self):
         import importlib.util
-        return {"version": "0.5.0", "mode": "byok", "interface": "original-workflows", "login_url": self.login_url, "logged_in": bool(self.account),
+        return {"version": "0.5.0", "mode": self.mode, "interface": "original-workflows", "login_url": self.login_url, "logged_in": bool(self.account),
+                "projects": ["wardrobe", "virtual", "real"],
                 "local_dependencies": {k: bool(importlib.util.find_spec(k)) for k in ("cv2", "onnxruntime", "imageio_ffmpeg", "tos")},
-                "note": "CZMIYOU 只验证产品 4 时间卡；费用由用户的供应商账户承担。配置不代表真实联调通过。"}
+                "note": ("三个项目共用米哟平台服务，管理员配置通道与计费；服务部署及真实生成须分别验收。" if self.mode == "platform"
+                         else "历史本机 Key 模式：费用由用户的供应商账户承担。配置不代表真实联调通过。")}
 
     def _record(self, key):
         record = self.store.get(key)
@@ -241,6 +256,8 @@ class Runtime:
                 self.store.put(record, "LOCAL_PROCESS_FAILED")
 
     def plan(self, project_id, artifact_id, image_paths, prompt, model, resolution="720p", ratio="adaptive", duration=5):
+        if self.mode == "platform":
+            raise HybridError("PLATFORM_USE_PROJECT_WORKFLOWS", 409)
         with self.lock:
             record = self._record(project_id)
             if record["state"] in BUSY:
@@ -312,6 +329,8 @@ class Runtime:
             return self.public(record)
 
     def submit(self, project_id):
+        if self.mode == "platform":
+            raise HybridError("PLATFORM_USE_PROJECT_WORKFLOWS", 409)
         with self.lock:
             record = self._record(project_id)
             if record["state"] != "approved" or not record.get("plan", {}).get("approved"):
@@ -328,6 +347,8 @@ class Runtime:
             self._submit_locked(project_id)
 
     def _check_plan(self, record):
+        if self.mode == "platform":
+            raise HybridError("PLATFORM_USE_PROJECT_WORKFLOWS", 409)
         if not self.account or record["owner"] != self.account["user_id"]:
             raise HybridError("SUBMIT_ACCOUNT_CHANGED", 409)
         self._verify()
@@ -365,6 +386,8 @@ class Runtime:
         self.store.put(record, "BYOK_SUBMIT_RETURNED")
 
     def poll(self, project_id):
+        if self.mode == "platform":
+            raise HybridError("PLATFORM_USE_PROJECT_WORKFLOWS", 409)
         with self.lock:
             record = self._record(project_id)
             if record["state"] == "succeeded":

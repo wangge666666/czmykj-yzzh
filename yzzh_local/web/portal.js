@@ -4,6 +4,7 @@
   const nativeFetch = window.fetch.bind(window);
   const owner = document.querySelector('meta[name="yzzh-owner"]')?.content || '';
   const context = document.querySelector('meta[name="yzzh-context"]')?.content || '';
+  const bootstrapServiceMode = document.querySelector('meta[name="yzzh-service-mode"]')?.content === 'platform' ? 'platform' : 'byok';
   let session = new URLSearchParams(location.hash.slice(1)).get('session') || '';
   if (session) history.replaceState(null, '', location.pathname + location.search);
   const headers = () => ({'X-Yzzh-Request':'1', 'X-Yzzh-Owner':owner, 'X-Yzzh-Context':context,
@@ -13,7 +14,8 @@
   // Isolate old UI draft/workspace keys as well as backend data. Do not erase
   // the historical unscoped keys: they still belong to the original web app.
   const storage = {get:Storage.prototype.getItem, set:Storage.prototype.setItem, remove:Storage.prototype.removeItem};
-  const key = name => String(name).startsWith('depthflow') ? `yzzh.${owner || 'guest'}.${name}` : name;
+  const key = name => String(name).startsWith('depthflow')
+    ? `yzzh.${owner || 'guest'}.${bootstrapServiceMode === 'platform' ? 'platform.' : ''}${name}` : name;
   Storage.prototype.getItem = function(name) { return storage.get.call(this, key(name)); };
   Storage.prototype.setItem = function(name, value) { return storage.set.call(this, key(name), value); };
   Storage.prototype.removeItem = function(name) { return storage.remove.call(this, key(name)); };
@@ -52,7 +54,7 @@
   let shadow, dialog, status, account, form, pending, settingsForm, configured, button, state;
   let readinessKey = '', readinessEpoch = 0, readinessPending = false;
   let panelView = 'settings', attentionSignature = '', hasAttention = false;
-  let serviceMode = 'byok';
+  let serviceMode = bootstrapServiceMode;
   const platformMode = () => serviceMode === 'platform';
   const platformFeatures = [['video','视频生成'], ['image','图片生成'], ['analysis','内容分析'], ['assets','角色素材库'], ['media','素材上传']];
   const platformReady = settings => settings?.ready === true && platformFeatures.every(([name]) => settings.capabilities?.[name] === true);
@@ -201,6 +203,7 @@
       shadow.querySelector('.approval-explanation').textContent = platformMode()
         ? '本次操作使用平台统一提供的服务。请核对下面的素材去向或平台计费信息，再决定是否继续。'
         : '本次操作将沿用已保存在本机的配置，无需重新填写 API Key。请核对下面的素材去向或生成费用后决定是否继续。';
+      shadow.querySelector('.agent-workbench-link').hidden = platformMode();
       button.textContent = current ? (platformMode() ? '账号与服务状态' : '账号与创作设置') : '登录并开始创作';
       if (panelView === 'settings') shadow.querySelector('.panel-title').textContent = platformMode() ? '账号与服务状态' : '账号与创作设置';
       if (current && (String(current.user_id) !== owner || settings.session_revision !== context ||
@@ -321,7 +324,7 @@
         <details><summary>高级设置 · 模型与上传方式</summary><div class="model-fields"></div><label>素材上传方式<select name="MEDIA_UPLOAD_MODE"><option value="temporary">自动临时上传 · 无需存储配置</option><option value="tos">使用自己的北京 TOS</option></select></label><p>自动上传使用第三方 Litterbox，文件通过链接可访问，服务声明约 3 天过期，插件不能提前删除。不适合保密素材；每次实际上传仍需确认。</p><div class="tos-fields" hidden><p>使用上方人物库 AK/SK 作为 TOS 凭据，还需具备对应桶的权限。</p></div></details>
         <button>保存并继续创作</button><button class="logout" type="button">退出账号</button></form>
       <section class="platform-status-view" hidden><h3>平台服务状态</h3><p class="platform-status" role="status"></p><ul class="platform-capabilities"></ul><p class="platform-balance"></p><button class="platform-logout" type="button">退出账号</button></section>
-      <section><b>本地基础自检</b><p class="readiness-status" role="status">登录后自动检查本地基础功能。</p><ul class="readiness-checks"></ul><button class="readiness-check" type="button" disabled>重新检查</button><p>仅检查本地人脸打码、深度处理和视频工具；不读取你的素材，不下载模型。供应商权限、上传服务和付费生成需另行验证。OCR、人声分离及其他大型模型属于可选扩展。</p><a href="/agent-workbench">查看 Agent 单段任务与预览 →</a></section>
+      <section><b>本地基础自检</b><p class="readiness-status" role="status">登录后自动检查本地基础功能。</p><ul class="readiness-checks"></ul><button class="readiness-check" type="button" disabled>重新检查</button><p>仅检查本地人脸打码、深度处理和视频工具；不读取你的素材，不下载模型。供应商权限、上传服务和付费生成需另行验证。OCR、人声分离及其他大型模型属于可选扩展。</p><a class="agent-workbench-link" href="/agent-workbench">查看 Agent 单段任务与预览 →</a></section>
       </div>
       <div class="approval-view" hidden><p class="approval-explanation">本次操作将沿用已保存在本机的配置，无需重新填写 API Key。请核对下面的素材去向或生成费用后决定是否继续。</p><div class="pending"></div></div>
     </div></div>`;
