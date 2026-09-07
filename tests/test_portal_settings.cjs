@@ -713,3 +713,43 @@ test('a missing platform receipt leaves the original request visible and does no
   assert.equal(button.disabled,false);
   f.assertPreserved();
 });
+
+test('each platform workflow shows its full scope once and stale polls cannot reopen a decided card', async () => {
+  for (const pathname of ['/projects/wardrobe', '/projects/long-video', '/projects/real-long-video']) {
+    const item = {...approval('first-upload'), summary: {operation:'media.upload',kind:'upload',destination:'米哟平台',bytes:1048576},
+      workflow:{version:1,id:'clicked-workflow',title:'生成本次白膜',steps:['素材上传','视频生成'],paid:true,asset_consent:false,cost:'本次视频生成按平台价格计费。'}};
+    const f = await fixture({pathname,initialSettings:platformSettings(),approvals:{pending:[item],unresolved:[]}});
+    const section=f.selectors.get('.pending').children[0];
+    const text=section.children.map(node=>node.textContent).join('\n');
+    assert.match(text,/素材上传.*视频生成/);
+    assert.match(text,/确认一次/);
+    assert.equal(f.calls.filter(call=>call.method==='POST').length,0);
+    const yes=section.children.find(node=>node.textContent==='确认本次操作及费用，开始执行');
+    const no=section.children.find(node=>node.textContent==='取消，不发送');
+    await Promise.all([yes.onclick(),yes.onclick(),no.onclick()]);
+    const decisions=f.calls.filter(call=>call.path==='/_plugin/decision');
+    assert.equal(decisions.length,1);
+    assert.equal(JSON.parse(decisions[0].body).workflow_id,'clicked-workflow');
+    f.approvals().pending.push(copy(item), {...copy(item),id:'second-upload'});
+    await f.refresh();
+    assert.equal(f.selectors.get('.overlay').hidden,true,'Older pending polls must not reopen accepted workflow');
+    f.approvals().pending=[{...copy(item),id:'new-upload',workflow:{...item.workflow,id:'new-click'}}];
+    await f.refresh();
+    assert.equal(f.selectors.get('.overlay').hidden,false,'A new click requires its own consent');
+    f.assertPreserved();
+  }
+});
+
+test('character workflow includes unchecked rights consent before its first upload',async()=>{
+  const item={...approval('portrait-upload'),summary:{operation:'media.upload',kind:'upload',destination:'米哟平台',bytes:32},
+    workflow:{version:1,id:'portrait-workflow',title:'上传本次虚拟人物',steps:['素材上传','人物入库与审核'],paid:false,asset_consent:true,cost:'不生成付费视频。'}};
+  const f=await fixture({initialSettings:platformSettings(),approvals:{pending:[item],unresolved:[]}});
+  const section=f.selectors.get('.pending').children[0];
+  const yes=section.children.find(node=>node.textContent==='确认本次操作，开始执行');
+  const checkbox=section.children.find(node=>node.className==='asset-consent').children[0];
+  assert.equal(checkbox.checked,false); assert.equal(yes.disabled,true);
+  checkbox.checked=true;checkbox.onchange();
+  await yes.onclick();
+  const decision=JSON.parse(f.calls.find(call=>call.path==='/_plugin/decision').body);
+  assert.equal(decision.workflow_id,'portrait-workflow');assert.equal(decision.compliance_confirmed,true);
+});

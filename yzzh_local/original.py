@@ -25,6 +25,7 @@ from flask import Response, jsonify, request, send_from_directory
 
 from hybrid_shared import HybridError
 from yzzh_local.media import TEMP_DESTINATION, TEMP_UPLOAD_URL
+from yzzh_local.workflow_approval import workflow_plan
 
 SOURCE = Path(__file__).resolve().parents[1]
 PAGES = {"/": "projects.html", "/single": "index.html", "/multi": "multi.html",
@@ -157,7 +158,8 @@ class OriginalBridge:
                 raise HybridError("LOCAL_SESSION_RESTART_REQUIRED", 503)
             key = uuid.uuid4().hex
             self.operations[key] = {"owner": owner, "session": session, "revision": revision,
-                                    "path": path, "method": method, "worker_key": worker["key"]}
+                                    "path": path, "method": method, "worker_key": worker["key"],
+                                    "workflow": workflow_plan(path, method, getattr(self.runtime, "mode", "byok"))}
             return key, worker
 
     def _record(self, item):
@@ -187,10 +189,18 @@ class OriginalBridge:
                 yield item
 
     def check_unresolved(self, owner):
-        items = list(self.unresolved(owner))
+        items = [item for item in self.unresolved(owner) if self.needs_reconciliation(item)]
         if items:
             code = "PREVIOUS_UPLOAD_UNCERTAIN" if all(uncertain_temporary_upload(item) for item in items) else "PREVIOUS_REQUEST_UNCERTAIN_CHECK_PROVIDER"
             raise HybridError(code, 409)
+
+    def needs_reconciliation(self, item):
+        # An active dispatch is normal progress, not an unknown receipt. Durable
+        # sending records from an earlier process still require reconciliation.
+        if getattr(self.runtime, "mode", "byok") != "platform":
+            return True
+        active = self.pending.get(item.get("id"))
+        return not (item.get("state") == "sending" and active and active.get("state") == "sending")
 
     def network(self, data, supplied):
         with self.runtime.lock:
@@ -219,10 +229,23 @@ class OriginalBridge:
                 summary = data.get("summary")
                 if not isinstance(summary, dict) or len(json.dumps(summary)) > 16000:
                     raise HybridError("INVALID_NETWORK_SUMMARY")
+                plan = operation.get("workflow")
+                consent = operation.get("consent")
+                if plan:
+                    if summary.get("operation") not in plan["commands"]:
+                        raise HybridError("WORKFLOW_OPERATION_OUTSIDE_SCOPE", 409)
+                    if consent and (consent["state"] == "rejected" or time.time() - consent["created"] > 86400):
+                        raise HybridError("WORKFLOW_CONSENT_ENDED", 409)
                 key = uuid.uuid4().hex
                 item = {"id": key, "operation": data["operation"], "owner": operation["owner"],
                         "source": operation["path"], "summary": summary, "state": "awaiting_approval", "created": time.time()}
                 item["service_mode"] = getattr(self.runtime, "mode", "byok")
+                if plan:
+                    item["workflow"] = {**plan, "id": data["operation"]}
+                    if consent and consent["state"] == "approved":
+                        item.update(state="approved", approved_by=consent["id"])
+                        if plan["asset_consent"]:
+                            item["compliance_confirmed"] = True
                 self.pending[key] = item
                 self._record(item)
                 return {"id": key}
@@ -231,6 +254,8 @@ class OriginalBridge:
                 raise HybridError("NETWORK_APPROVAL_NOT_FOUND", 404)
             if time.time() - item["created"] > 600 and item["state"] == "awaiting_approval":
                 item["state"] = "rejected"
+                if item.get("workflow"):
+                    operation["consent"] = {"state": "rejected", "id": item["id"], "created": time.time()}
                 self._record(item)
             if event == "take" and item["state"] == "approved":
                 self.binding(operation, license=True)
@@ -249,10 +274,17 @@ class OriginalBridge:
             owner, _, _ = self.context(owner, session)
             result = [x for x in self.pending.values() if x["owner"] == owner and x["state"] == "awaiting_approval"
                       and self.operations[x["operation"]]["session"] == session]
+            # Parallel requests within the same clicked action share one card.
+            seen, grouped = set(), []
+            for item in result:
+                group = item["operation"] if item.get("workflow") else item["id"]
+                if group not in seen:
+                    grouped.append(item)
+                    seen.add(group)
             # Derived display metadata only: preserve the durable journal and gate.
             unresolved = [{**item, "diagnosis": "temporary_upload_uncertain" if uncertain_temporary_upload(item) else "request_uncertain"}
-                          for item in self.unresolved(owner)]
-            return {"pending": result, "unresolved": unresolved}
+                          for item in self.unresolved(owner) if self.needs_reconciliation(item)]
+            return {"pending": grouped, "unresolved": unresolved}
 
     def agent_call(self, name, arguments):
         # Narrow tools, not an arbitrary HTTP proxy or an approval back door.
@@ -297,11 +329,25 @@ class OriginalBridge:
             if not item or item["state"] != "awaiting_approval" or type(data.get("approved")) is not bool:
                 raise HybridError("NETWORK_APPROVAL_NOT_FOUND", 404)
             self.binding(self.operations[item["operation"]], license=data["approved"])
-            if data["approved"] and item["summary"].get("operation") == "assets.CreateAsset":
+            operation = self.operations[item["operation"]]
+            scope = data.get("workflow_id")
+            plan = operation.get("workflow") if scope else None
+            if scope and (scope != item["operation"] or not plan or item.get("workflow", {}).get("id") != scope):
+                raise HybridError("WORKFLOW_CONSENT_CHANGED", 409)
+            if data["approved"] and (item["summary"].get("operation") == "assets.CreateAsset" or (plan and plan["asset_consent"])):
                 if data.get("compliance_confirmed") is not True:
                     raise HybridError("ASSET_CONSENT_REQUIRED", 409)
                 item["compliance_confirmed"] = True
             item["state"] = "approved" if data["approved"] else "rejected"
+            if plan:
+                operation["consent"] = {"state": item["state"], "id": item["id"], "created": time.time()}
+                for sibling in self.pending.values():
+                    if sibling["operation"] == item["operation"] and sibling["state"] == "awaiting_approval":
+                        sibling.update(state=item["state"], approved_by=item["id"])
+                        if data["approved"] and plan["asset_consent"]:
+                            sibling["compliance_confirmed"] = True
+                        self._record(sibling)
+                item["approved_by"] = item["id"]
             self._record(item)
             return {"state": item["state"]}
 

@@ -57,6 +57,8 @@
   let shadow, dialog, status, account, form, pending, settingsForm, configured, button, state;
   let readinessKey = '', readinessEpoch = 0, readinessPending = false;
   let panelView = 'settings', attentionSignature = '', hasAttention = false;
+  const deciding = new Set(), decided = new Set();
+  const approvalKey = item => item.workflow?.id || item.id;
   let serviceMode = bootstrapServiceMode;
   const platformMode = () => serviceMode === 'platform';
   const platformFeatures = [['video','视频生成'], ['image','图片生成'], ['analysis','内容分析'], ['assets','角色素材库'], ['media','素材上传']];
@@ -297,6 +299,9 @@
       shadow.querySelector('.tos-fields').hidden = settingsForm.elements.MEDIA_UPLOAD_MODE.value !== 'tos';
       }
       const approvals = await api('/_plugin/approvals');
+      // A poll started before the click can return an old pending snapshot.
+      // Accepted decisions must not reopen the same card or enable a second POST.
+      approvals.pending = approvals.pending.filter(item => !decided.has(approvalKey(item)));
       hasAttention = !!(approvals.pending.length || approvals.unresolved.length);
       shadow.querySelector('.top-details').textContent = hasAttention ? '查看待确认操作' : '账号与服务详情';
       const signature = JSON.stringify([serviceMode, approvals.pending.map(item => [item.id, item.state]), approvals.unresolved.map(item => [item.id, item.state, item.diagnosis])]);
@@ -327,19 +332,23 @@
       }
       for (const item of approvals.pending) {
         const section = document.createElement('section');
+        const workflow = platformMode() && item.workflow?.version === 1 ? item.workflow : null;
+        const decisionKey = approvalKey(item);
         const platformUpload = platformMode() && item.summary.operation === 'media.upload' && item.summary.kind === 'upload';
         const upload = platformUpload || item.summary.destination === 'Litterbox 临时素材托管';
-        const title = document.createElement('h3'); title.textContent = upload ? '确认上传本次素材' : '确认当前云端操作'; section.append(title);
+        const title = document.createElement('h3'); title.textContent = workflow ? workflow.title : upload ? '确认上传本次素材' : '确认当前云端操作'; section.append(title);
         const description = document.createElement('p');
-        description.textContent = platformUpload
+        description.textContent = workflow
+          ? `本次包含：${workflow.steps.join('、')}。${workflow.cost} 确认一次后，本步骤内的上传与处理会连续执行。重新发起操作、切换账号或修改配置后需重新确认。`
+          : platformUpload
           ? `${(item.summary.bytes / 1048576).toFixed(1)} MB 素材将上传至平台素材服务，用于本次创作。保存期限由平台管理。${item.summary.cost || ''}`
           : upload ? `${(item.summary.bytes / 1048576).toFixed(1)} MB 素材将临时上传至 Litterbox，供人物审核或视频生成读取。持链接可访问，服务声明约 3 天过期，插件不能提前删除。请确认你有权上传，且不包含保密素材。`
           : `${item.summary.destination}：${item.summary.cost}`;
         section.append(description);
         const advanced = document.createElement('details'); const caption = document.createElement('summary'); caption.textContent = '查看本次请求详情';
-        const detail = document.createElement('pre'); detail.textContent = JSON.stringify({原步骤:item.source, ...item.summary}, null, 2);
+        const detail = document.createElement('pre'); detail.textContent = JSON.stringify({原步骤:item.source, ...(workflow ? {本次操作:workflow} : {}), ...item.summary}, null, 2);
         advanced.append(caption, detail); section.append(advanced);
-        const needsAssetConsent = platformMode() && item.summary.operation === 'assets.CreateAsset';
+        const needsAssetConsent = platformMode() && (item.summary.operation === 'assets.CreateAsset' || workflow?.asset_consent === true);
         let assetConsent;
         if (needsAssetConsent) {
           const label = document.createElement('label'); label.className = 'asset-consent';
@@ -347,21 +356,27 @@
           const text = document.createElement('span'); text.textContent = '我确认拥有该虚拟人物素材及本次用途的使用权，并同意提交平台审核';
           label.append(assetConsent, text); section.append(label);
         }
+        const actions = [];
+        const updateActions = () => actions.forEach(([action, approved]) => {
+          action.disabled = deciding.has(decisionKey) || decided.has(decisionKey) || (approved && needsAssetConsent && assetConsent.checked !== true);
+        });
+        if (needsAssetConsent) assetConsent.onchange = updateActions;
         for (const approved of [true,false]) {
-          const action = document.createElement('button'); action.textContent = approved ? (upload ? '同意上传，继续' : '确认本次操作及可能的费用') : '取消，不发送';
-          let sending = false;
-          action.disabled = approved && needsAssetConsent;
-          if (approved && needsAssetConsent) assetConsent.onchange = () => {action.disabled = sending || assetConsent.checked !== true;};
+          const action = document.createElement('button'); action.textContent = approved ? (workflow ? (workflow.paid ? '确认本次操作及费用，开始执行' : '确认本次操作，开始执行') : upload ? '同意上传，继续' : '确认本次操作及可能的费用') : '取消，不发送';
+          actions.push([action, approved]); updateActions();
           action.onclick = async () => {
-            if (sending) return;
+            if (deciding.has(decisionKey) || decided.has(decisionKey)) return;
             if (approved && needsAssetConsent && assetConsent.checked !== true) {show('请先确认本次虚拟人物素材的使用权和审核授权。', 'approval'); return;}
-            sending = true; action.disabled = true;
+            deciding.add(decisionKey); updateActions();
             try {
               const decision = {owner:Number(owner), session:context, id:item.id, approved};
+              if (workflow) decision.workflow_id = workflow.id;
               if (approved && needsAssetConsent) decision.compliance_confirmed = true;
-              await api('/_plugin/decision', decision); await refresh();
+              await api('/_plugin/decision', decision);
+              decided.add(decisionKey);
+              await refresh();
             } catch(e) {show(e.message, 'approval');}
-            finally {sending = false; action.disabled = approved && needsAssetConsent && assetConsent.checked !== true;}
+            finally {deciding.delete(decisionKey); updateActions();}
           };
           section.append(action);
         }

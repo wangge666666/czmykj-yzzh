@@ -115,7 +115,7 @@ class Protocol:
             version = (message.get("params") or {}).get("protocolVersion")
             reply["result"] = {"protocolVersion": version if version in {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"} else "2025-06-18",
                 "serverInfo": {"name": "czmiyou-yzzh", "version": "0.5.0"}, "capabilities": {"tools": {}},
-                "instructions": "先查询 health 的登录、版本与实际模式及已有任务。默认平台模式三个项目共用米哟服务，管理员密钥留在服务器；不向用户索取 Key。上传和付费请求只能由用户逐次批准，不代填密码、不绕过批准、不重发结果不明任务。BYOK 仅显式历史兼容，不自动切换已有后台。"}
+                "instructions": "先查询 health 的登录、版本与实际模式及已有任务。默认平台模式三个项目共用米哟服务，管理员密钥留在服务器；不向用户索取 Key。本次步骤的素材上传、模型调用与费用由用户一次确认，范围内请求连续执行；新步骤重新确认。不代填密码、不代批、不重发结果不明任务。BYOK 仅显式历史兼容，不自动切换已有后台。"}
         elif method == "ping":
             reply["result"] = {}
         elif not self.initialized:

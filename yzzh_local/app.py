@@ -31,7 +31,7 @@ def create_app(runtime, session_key, port):
             if (request.content_length or 0) > 16000:
                 raise HybridError("REQUEST_TOO_LARGE", 413)
             return None  # Single-use nonce and same-origin headers checked by launcher.
-        if request.path in PAGES or request.path == "/agent-workbench" or request.path == "/_plugin/portal.js" or request.path.startswith(("/static/", "/_plugin/agent-assets/")):
+        if request.path in PAGES or request.path == "/favicon.ico" or request.path == "/agent-workbench" or request.path == "/_plugin/portal.js" or request.path.startswith(("/static/", "/_plugin/agent-assets/")):
             return None
         if request.path == "/_plugin/engine":
             if not request.is_json or (request.content_length or 0) > 20000:
@@ -76,6 +76,10 @@ def create_app(runtime, session_key, port):
     @app.get("/")
     def index():
         return app.send_static_file("index.html")
+
+    @app.get("/favicon.ico")
+    def favicon():
+        return "", 204
 
     @app.post("/session")
     def session():

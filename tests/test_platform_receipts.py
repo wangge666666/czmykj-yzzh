@@ -89,5 +89,8 @@ class ReceiptTests(unittest.TestCase):
     def test_not_found_keeps_unknown_request_for_future_query(self):
         self.uncertain()
         self.platform.receipt.side_effect=HybridError('REQUEST_NOT_FOUND',404)
-        with self.assertRaises(HybridError):self.check()
+        result = self.check()
+        self.assertFalse(result['confirmed'])
+        self.assertEqual(result['state'], 'not_found')
+        self.assertIn('不会重新', result['message'])
         self.assertEqual(len(list(self.bridge.unresolved(71))),1)

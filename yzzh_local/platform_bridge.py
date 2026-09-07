@@ -206,7 +206,17 @@ def reconcile_request(bridge, data):
             raise HybridError("INVALID_PLATFORM_REQUEST")
         token, session = rt.token, rt.session_revision
         request_id = hashlib.sha256(item["id"].encode()).hexdigest()
-    response = rt.platform.receipt(token, request_id)
+    try:
+        response = rt.platform.receipt(token, request_id)
+    except HybridError as error:
+        if error.code != "REQUEST_NOT_FOUND":
+            raise
+        with rt.lock:
+            bridge.context(owner, session)
+        # A successful query with no matching receipt is a business result,
+        # not a missing local route and not permission to send the request again.
+        return {"confirmed": False, "state": "not_found", "task_id": "",
+                "message": "平台暂未查到这条请求，尚不能确定是否已受理。记录已保留，请稍后查询；不会重新上传或生成。"}
     receipt = response.get("result") if isinstance(response, dict) else None
     if (not isinstance(receipt, dict) or receipt.get("request_id") != request_id
             or receipt.get("operation") != expected_operation):
