@@ -16,6 +16,12 @@ const settings = (hasKey, extra = {}) => ({
   bucket: '', image_model: '', performance_model: '', upload_mode: 'temporary',
   session_revision: 'fixture-context', ...extra,
 });
+const platformSettings = (extra = {}) => ({
+  mode: 'platform', owner_id: 71, session_revision: 'fixture-context', ready: true, configured: true, fields: {},
+  capabilities: {video: true, image: true, analysis: true, assets: true, media: true},
+  models: {video: 'fixture-video', white: 'fixture-white', image: 'fixture-image', analysis: 'fixture-analysis'},
+  projects: ['wardrobe', 'virtual', 'real'], balance: 120.5, licensed: true, message: '平台服务已就绪', ...extra,
+});
 const approval = (id, upload = false) => ({
   id, source: upload ? '上传本次白模参考' : '生成白模视频',
   summary: upload ? {destination: 'Litterbox 临时素材托管', bytes: 1048576} :
@@ -55,7 +61,8 @@ async function fixture(options = {}) {
     '.settings', '.configured', '.entry', '.login-destination', '.unified-login',
     '.unified-login a', '.tos-fields', '.close', '.fields', '.identity-fields',
     '.model-fields', '.logout', '.readiness-status', '.readiness-checks', '.readiness-check',
-    '.settings-view', '.approval-view', '.panel-title']) selectors.set(selector, element());
+    '.settings-view', '.approval-view', '.panel-title', '.billing-info', '.approval-explanation',
+    '.platform-status-view', '.platform-status', '.platform-capabilities', '.platform-balance', '.platform-logout']) selectors.set(selector, element());
   const form = selectors.get('.settings');
   form.elements = {MEDIA_UPLOAD_MODE: Object.assign(element(), {name: 'MEDIA_UPLOAD_MODE'})};
   for (const selector of ['.fields', '.identity-fields', '.model-fields', '.tos-fields']) {
@@ -82,14 +89,16 @@ async function fixture(options = {}) {
   ]);
   const body = element();
   const document = {
-    body,
+    body, title: 'fixture',
     querySelector: selector => page.get(selector) || null,
+    querySelectorAll: () => [],
+    createTreeWalker: () => ({nextNode: () => null}),
     getElementById: id => page.get(`#${id}`) || null,
     addEventListener: (name, callback) => listeners.set(name, callback),
     createElement: () => Object.assign(element(), {attachShadow: () => shadow}),
   };
   const location = {
-    origin: 'http://127.0.0.1:7871', pathname: '/projects/wardrobe', search: '', hash: '',
+    origin: 'http://127.0.0.1:7871', pathname: options.pathname || '/projects/wardrobe', search: '', hash: '',
     get href() { return this.origin + this.pathname; },
     set href(value) { navigations.push(value); },
     reload: () => navigations.push('reload'),
@@ -141,6 +150,10 @@ async function fixture(options = {}) {
       savedOnce = true;
       return response(200, saved);
     }
+    if (url.pathname === '/api/logout' && method === 'POST') {
+      publicState.account = null;
+      return response(200, {logged_out: true});
+    }
     throw Error(`Unexpected request: ${method} ${url.pathname}`);
   };
   class Storage {
@@ -155,6 +168,7 @@ async function fixture(options = {}) {
   }
   const window = {fetch: nativeFetch};
   const sandbox = {window, document, location, Storage, FormData, URL, URLSearchParams,
+    NodeFilter: {SHOW_TEXT: 4}, MutationObserver: class { observe() {} },
     Headers, Request, history: {replaceState: (...args) => navigations.push(args)},
     setInterval: callback => { intervals.push(callback); return intervals.length; }};
   vm.runInNewContext(source, sandbox, {filename: 'portal.js'});
@@ -173,14 +187,14 @@ async function fixture(options = {}) {
       form.elements.TOS_SECRET_KEY.value = 'fixture-sk-not-real';
       await form.onsubmit({preventDefault() {}});
     },
-    assertPreserved() {
+    assertPreserved(expectedNavigations = []) {
       assert.equal(page.get('#referenceVideo').files, selectedFiles);
       assert.equal(page.get('#referenceVideo').files[0], selectedFile);
       assert.equal(page.get('#prompt').value, '保留这段用户已经填写的提示词');
       assert.equal(page.get('#modeInput').value, 'clothing');
-      assert.deepEqual(navigations, []);
+      assert.deepEqual(navigations, expectedNavigations);
       assert.ok(calls.every(call => call.origin === location.origin &&
-        ['/api/state', '/api/settings', '/_plugin/approvals', '/_plugin/decision', '/api/plugin-readiness'].includes(call.path)));
+        ['/api/state', '/api/settings', '/api/logout', '/_plugin/approvals', '/_plugin/decision', '/api/plugin-readiness'].includes(call.path)));
     },
   };
 }
@@ -448,5 +462,167 @@ test('a delayed readiness warning cannot replace a pending confirmation with the
   assert.equal(f.selectors.get('.approval-view').hidden, false);
   assert.match(f.selectors.get('.readiness-status').textContent, /尚未就绪/);
   assert.equal(f.calls.filter(call => call.method === 'POST').length, 0);
+  f.assertPreserved();
+});
+
+test('all three project pages show a shared platform account panel without requesting personal keys', async () => {
+  for (const pathname of ['/projects/wardrobe', '/projects/long-video', '/projects/real-long-video']) {
+    const f = await fixture({pathname, initialSettings: platformSettings()});
+    f.selectors.get('.entry').onclick(); await settle();
+    assert.equal(f.selectors.get('.entry').textContent, '账号与服务状态', pathname);
+    assert.equal(f.selectors.get('.panel-title').textContent, '账号与服务状态');
+    assert.equal(f.form.hidden, true);
+    assert.equal(f.selectors.get('.platform-status-view').hidden, false);
+    assert.equal(f.badge.textContent, '平台服务已就绪');
+    assert.equal(f.badge.classList.contains('ready'), true);
+    assert.match(f.selectors.get('.platform-status').textContent, /三个项目共用平台/);
+    assert.equal(f.selectors.get('.platform-capabilities').children.length, 5);
+    assert.equal(f.selectors.get('.platform-balance').textContent, '平台账户余额：¥ 120.50');
+    assert.doesNotMatch(f.selectors.get('.billing-info').textContent, /自己的模型|不扣 CZMIYOU/);
+    assert.doesNotMatch(f.selectors.get('.platform-status').textContent, /填写|Key|密钥/);
+    await f.save();
+    assert.equal(f.calls.filter(call => call.path === '/api/settings').length, 0);
+    for (const name of ['ARK_API_KEY', 'TOS_ACCESS_KEY', 'TOS_SECRET_KEY']) assert.equal(f.form.elements[name].value, '');
+    f.assertPreserved();
+  }
+});
+
+test('platform readiness needs every capability and ready to be strictly true', async () => {
+  for (const feature of ['video', 'image', 'analysis', 'assets', 'media']) {
+    for (const value of [false, 'true', 1, undefined]) {
+      const capabilities = {...platformSettings().capabilities, [feature]: value};
+      const f = await fixture({initialSettings: platformSettings({capabilities})});
+      assert.equal(f.badge.textContent, '平台服务待配置');
+      assert.equal(f.badge.classList.contains('ready'), false);
+      assert.equal(f.form.hidden, true);
+      assert.match(f.selectors.get('.platform-status').textContent, /联系管理员/);
+      assert.doesNotMatch(f.selectors.get('.platform-status').textContent, /填写|Key|密钥/);
+      f.assertPreserved();
+    }
+  }
+  for (const ready of [false, 'true', 1, undefined]) {
+    const f = await fixture({initialSettings: platformSettings({ready})});
+    assert.equal(f.badge.classList.contains('ready'), false);
+    assert.equal(f.form.hidden, true);
+    f.assertPreserved();
+  }
+});
+
+test('platform account or session changes clear readiness, balance, approval state, and password drafts', async () => {
+  for (const change of ['account', 'session', 'owner', 'logout', 'logout-without-settings']) {
+    const f = await fixture({initialSettings: platformSettings(),
+      approvals: {pending: [approval('fixture-video')], unresolved: []}});
+    f.form.elements.ARK_API_KEY.value = 'synthetic-stale-draft';
+    if (change === 'account') f.state().account.user_id = 72;
+    if (change === 'session') f.state().settings.session_revision = 'another-context';
+    if (change === 'owner') f.state().settings.owner_id = 72;
+    if (change === 'logout') f.state().account = null;
+    if (change === 'logout-without-settings') {f.state().account = null; f.state().settings = null;}
+    await f.refresh();
+    assert.equal(f.badge.classList.contains('ready'), false);
+    assert.equal(f.badge.textContent, '平台服务待验证');
+    assert.equal(f.form.hidden, true);
+    assert.equal(f.selectors.get('.platform-status-view').hidden, true);
+    assert.equal(f.selectors.get('.platform-balance').textContent, '');
+    assert.equal(f.selectors.get('.platform-capabilities').children.length, 0);
+    assert.equal(f.selectors.get('.pending').children.length, 0);
+    assert.equal(f.form.elements.ARK_API_KEY.value, '');
+    assert.ok(f.calls.every(call => call.method === 'GET'));
+    f.assertPreserved();
+  }
+});
+
+test('the platform panel has its own logout action that clears ready state before reloading', async () => {
+  const f = await fixture({initialSettings: platformSettings()});
+  await f.selectors.get('.platform-logout').onclick();
+  assert.equal(f.badge.classList.contains('ready'), false);
+  assert.equal(f.badge.textContent, '平台服务待验证');
+  assert.equal(f.selectors.get('.platform-status-view').hidden, true);
+  assert.equal(f.selectors.get('.platform-balance').textContent, '');
+  assert.equal(f.calls.filter(call => call.path === '/api/logout' && call.method === 'POST').length, 1);
+  assert.equal(f.calls.filter(call => call.path === '/api/settings').length, 0);
+  f.assertPreserved(['reload']);
+});
+
+test('platform approvals describe platform storage and billing while preserving individual decisions', async () => {
+  const upload = {id: 'fixture-platform-upload', source: '准备白模参考', summary: {
+    destination: '米哟平台', operation: 'media.upload', kind: 'upload', bytes: 1048576,
+    cost: '素材存入平台；此步不创建付费生成任务。',
+  }};
+  const f = await fixture({initialSettings: platformSettings(), approvals: {pending: [upload], unresolved: []}});
+  assert.equal(f.selectors.get('.approval-view').hidden, false);
+  assert.equal(f.selectors.get('.settings-view').hidden, true);
+  assert.equal(f.form.hidden, true);
+  assert.match(f.selectors.get('.approval-explanation').textContent, /平台统一提供/);
+  assert.doesNotMatch(f.selectors.get('.approval-explanation').textContent, /Key|本机的配置/);
+  let section = f.selectors.get('.pending').children[0];
+  assert.match(section.children[1].textContent, /上传至平台素材服务/);
+  assert.doesNotMatch(section.children[1].textContent, /Litterbox|3 天/);
+  await section.children.find(child => child.textContent === '同意上传，继续').onclick();
+  f.approvals().pending.push({id: 'fixture-platform-generation', source: '生成白模', summary: {
+    destination: '米哟平台', operation: 'video.create', kind: 'generation',
+    cost: '由米哟账户按管理员配置的通道和价格计费，本次请求仅执行一次。',
+  }});
+  await f.refresh();
+  section = f.selectors.get('.pending').children[0];
+  assert.match(section.children[1].textContent, /米哟账户.*计费/);
+  assert.equal(f.calls.filter(call => call.path === '/_plugin/decision').length, 1, 'Upload permission must not approve generation');
+  await f.save();
+  assert.equal(f.calls.filter(call => call.path === '/api/settings').length, 0);
+  assert.equal(f.selectors.get('.approval-view').hidden, false);
+  assert.equal(f.form.hidden, true);
+  f.assertPreserved();
+});
+
+test('platform unresolved requests point to platform records and keep unknown balance distinct from zero', async () => {
+  const f = await fixture({initialSettings: platformSettings({balance: null}),
+    approvals: {pending: [], unresolved: [{id: 'fixture-platform-uncertain', state: 'uncertain'}]}});
+  assert.match(f.selectors.get('.pending').children[0].textContent, /平台任务记录和账单/);
+  assert.doesNotMatch(f.selectors.get('.pending').children[0].textContent, /供应商控制台/);
+  assert.match(f.selectors.get('.platform-balance').textContent, /暂未获取/);
+  f.state().settings.balance = 0;
+  await f.refresh();
+  assert.equal(f.selectors.get('.platform-balance').textContent, '平台账户余额：¥ 0.00');
+  assert.ok(f.calls.every(call => call.method === 'GET'));
+  f.assertPreserved();
+});
+
+test('platform character submission requires an explicit unchecked consent for each new request', async () => {
+  const item = id => ({id, source: '提交虚拟人物审核', summary: {
+    destination: '米哟平台', operation: 'assets.CreateAsset', kind: 'asset', cost: '按平台配置处理本次请求。',
+  }});
+  const f = await fixture({initialSettings: platformSettings(), approvals: {pending: [item('fixture-asset-one')], unresolved: []}});
+  let section = f.selectors.get('.pending').children[0];
+  let label = section.children.find(child => child.className === 'asset-consent');
+  assert.ok(label);
+  let checkbox = label.children.find(child => child.type === 'checkbox');
+  let approve = section.children.find(child => child.textContent === '确认本次操作及可能的费用');
+  assert.equal(checkbox.checked, false);
+  assert.equal(approve.disabled, true);
+  assert.match(label.children.find(child => child.textContent).textContent, /拥有该虚拟人物素材.*使用权.*同意提交平台审核/);
+  await approve.onclick();
+  assert.equal(f.calls.filter(call => call.path === '/_plugin/decision').length, 0, 'An unchecked checkbox cannot authorize a request');
+  checkbox.checked = true; checkbox.onchange();
+  assert.equal(approve.disabled, false);
+  await f.refresh();
+  assert.equal(f.selectors.get('.pending').children[0], section, 'Polling must preserve the current checkbox choice');
+  await approve.onclick();
+  assert.deepEqual(JSON.parse(f.calls.find(call => call.path === '/_plugin/decision').body), {
+    owner: 71, session: 'fixture-context', id: 'fixture-asset-one', approved: true, compliance_confirmed: true,
+  });
+  f.approvals().pending.push(item('fixture-asset-two'));
+  await f.refresh();
+  section = f.selectors.get('.pending').children[0];
+  label = section.children.find(child => child.className === 'asset-consent');
+  checkbox = label.children.find(child => child.type === 'checkbox');
+  approve = section.children.find(child => child.textContent === '确认本次操作及可能的费用');
+  assert.equal(checkbox.checked, false, 'A prior consent must not authorize a different asset request');
+  assert.equal(approve.disabled, true);
+  await section.children.find(child => child.textContent === '取消，不发送').onclick();
+  const decisions = f.calls.filter(call => call.path === '/_plugin/decision');
+  assert.deepEqual(JSON.parse(decisions[1].body), {
+    owner: 71, session: 'fixture-context', id: 'fixture-asset-two', approved: false,
+  });
+  assert.equal(f.calls.filter(call => call.path === '/api/settings').length, 0);
   f.assertPreserved();
 });
