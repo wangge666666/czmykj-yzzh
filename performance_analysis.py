@@ -663,7 +663,7 @@ def build_white_model_performance_prompt(
                 f"{float(item.get('start') or 0):.2f}–{float(item.get('end') or 0):.2f}秒，P{slot}："
                 f"只执行位置、姿态、表情、动作与轨迹约束：{'；'.join(constraints)}{exclude_text}。"
             )
-    lines.append("白模表演约束不得引用或恢复原人物的服装、鞋袜、发型、毛发、眼镜、首饰、耳饰、头饰及其他穿戴外观。")
+    lines.append("白模表演只控制动作与口型；人偶始终保持纯白长袖长裤工作服、手套与平底鞋，不继承原人物的穿戴外观。")
     text = "\n".join(lines)
     return text if len(text) <= max_chars else text[: max_chars - 1].rstrip() + "…"
 

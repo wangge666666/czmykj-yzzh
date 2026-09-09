@@ -4355,8 +4355,9 @@ class WebAppTests(unittest.TestCase):
         prompt = web_app.DEFAULT_WHITE_MODEL_PROMPT
         self.assertIn("@视频1", prompt)
         self.assertNotIn("@图片", prompt)
-        self.assertIn("光滑光头", prompt)
-        self.assertIn("不透明的纯白素体外壳", prompt)
+        self.assertIn("非写实的纯白三维动画人偶", prompt)
+        self.assertIn("宽松、不透明的纯白长袖长裤连体工作服", prompt)
+        self.assertIn("纯白手套与纯白平底鞋", prompt)
         self.assertIn("标准绿幕 #00B140", prompt)
         self.assertIn("严禁出现或保留任何字幕", prompt)
         self.assertIn("台词只表现为嘴部动作", prompt)
