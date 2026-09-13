@@ -601,7 +601,7 @@ class WardrobeSwapTests(unittest.TestCase):
                 self.assertEqual(kwargs["options"]["reference_upload_strategy"], "stable")
                 self.assertEqual(kwargs["person_source"], "asset://asset-abcdef123")
                 self.assertEqual(kwargs["depth_path"], white)
-                self.assertEqual(Path(kwargs["clothing_source"]), clothing)
+                self.assertEqual(Path(kwargs["clothing_source"]).resolve(), clothing.resolve())
                 self.assertTrue(Path(kwargs["scene_source"]).is_file())
                 with web_app.JOBS_LOCK:
                     web_app.JOBS.pop(payload["id"], None)
@@ -657,9 +657,9 @@ class WardrobeSwapTests(unittest.TestCase):
                 payload = response.get_json()
                 self.assertEqual(payload["kind"], "wardrobe_generate_custom")
                 kwargs = mock_thread.call_args.kwargs["kwargs"]
-                self.assertEqual(Path(kwargs["person_source"]), person)
-                self.assertEqual(Path(kwargs["clothing_source"]), clothing)
-                self.assertEqual(Path(kwargs["scene_source"]), scene)
+                self.assertEqual(Path(kwargs["person_source"]).resolve(), person.resolve())
+                self.assertEqual(Path(kwargs["clothing_source"]).resolve(), clothing.resolve())
+                self.assertEqual(Path(kwargs["scene_source"]).resolve(), scene.resolve())
                 self.assertIn("完成随心换", kwargs["options"]["prompt"])
                 self.assertEqual(kwargs["options"]["model"], web_app.DEFAULT_SEEDANCE_25_MODEL)
                 with web_app.JOBS_LOCK:
@@ -713,10 +713,10 @@ class WardrobeSwapTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 202, response.get_data(as_text=True))
                 payload = response.get_json()
                 kwargs = mock_thread.call_args.kwargs["kwargs"]
-                self.assertNotEqual(Path(kwargs["person_source"]), person)
+                self.assertNotEqual(Path(kwargs["person_source"]).resolve(), person.resolve())
                 self.assertTrue(Path(kwargs["person_source"]).is_file())
-                self.assertEqual(Path(kwargs["clothing_source"]), clothing)
-                self.assertEqual(Path(kwargs["scene_source"]), scene)
+                self.assertEqual(Path(kwargs["clothing_source"]).resolve(), clothing.resolve())
+                self.assertEqual(Path(kwargs["scene_source"]).resolve(), scene.resolve())
                 with web_app.JOBS_LOCK:
                     web_app.JOBS.pop(payload["id"], None)
                 response.close()
@@ -949,7 +949,9 @@ class WardrobeSwapTests(unittest.TestCase):
                 with web_app.JOBS_LOCK:
                     web_app.JOBS.pop(source.id, None)
 
-    def test_extracted_person_submission_requires_authorization(self) -> None:
+    @patch("web_app.ark_assets_configured", return_value=True)
+    @patch("web_app.prepare_ark_character_upload_source")
+    def test_extracted_person_submission_requires_authorization(self, mock_upload: Mock, _configured: Mock) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             person = root / "person.png"
@@ -975,6 +977,7 @@ class WardrobeSwapTests(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 400)
                 self.assertIn("合法授权", response.get_json()["error"])
+                mock_upload.assert_not_called()
                 response.close()
             finally:
                 with web_app.JOBS_LOCK:

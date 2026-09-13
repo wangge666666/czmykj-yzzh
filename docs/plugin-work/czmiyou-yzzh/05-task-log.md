@@ -2,6 +2,12 @@
 
 创建日期：2026-09-06
 
+## 2026-09-13 发布前测试校准
+
+用户授权推送当前代码并上传客户插件包。使用实际安装的 Python 3.12.14 核验：远端 `2f60260` 有 7 项既有测试失败，本地 `7157138` 另有 1 项白模页面旧文案断言失败。只修改测试：macOS 路径按 resolve 后比较；首页名称、角色库禁缓存请求和完整穿衣白模文案对齐当前实现；授权测试显式模拟素材库已配置，仍断言未同意时拒绝且不调用上传准备。没有修改或绕过生产授权逻辑。
+
+验证：Python 3.12 `-m unittest discover -s tests -q`，480/480 通过；`node --test tests/*.cjs`，44/44 通过。旧 `.venv-codex` 实际为 Python 3.9，不能作为需要 Python 3.10+ 的客户包安装证据。改动仅测试与本日志，不影响客户端载荷，无需重启或替换已登录后台。
+
 ## 2026-09-07 用户授权的 Mac 本机安装
 
 完整包安装到 Applications/czmiyou-yzzh，新增个人 Codex marketplace 登记与固定运行路径，注册专用 URL 启动器。包内无 install.sh，因此使用已验证的 setup.py/register_launcher.py dry-run 与显式安装、官方 scaffold helper 和 codex plugin add；不套用 Plugin Manager 自身安装器。既有 marketplace 备份并逐项保留。安装后 release 73 载荷哈希一致，Codex installed/enabled/version、源与缓存一致、实际 stdio 12 工具/health 均通过；系统专用链接由 7871 未监听状态启动到 HTTP 200。保留旧 17872；不动旧账号/任务、不安装模型、不提交或部署、不操作付费。详见 07 新增安装记录。刷新 Codex 后的新任务发现、线上登录交接与 WorkBuddy 仍待验收。
