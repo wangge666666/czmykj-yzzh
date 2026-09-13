@@ -18,6 +18,20 @@ def start_account_fixture():
     from flask import Flask, jsonify, request
     from werkzeug.serving import make_server, WSGIRequestHandler
     app = Flask('synthetic-account-only')
+    app.config['cloud_mutations'] = 0
+    @app.get('/api/yzzh/capabilities')
+    def capabilities():
+        if request.headers.get('Authorization') != 'Bearer synthetic-fixture-token':
+            return jsonify(code='FIXTURE_UNAUTHORIZED'), 401
+        return jsonify(mode='platform', product_id=4, ready=True, licensed=True,
+            projects=['wardrobe', 'virtual', 'real'], channel='primary', asset_library='canvas-shared-v1',
+            capabilities={key: True for key in ('video', 'image', 'analysis', 'assets', 'media')},
+            models={key: 'fixture-' + key for key in ('video', 'white', 'image', 'analysis')})
+    @app.post('/api/yzzh/operations')
+    @app.post('/api/yzzh/media')
+    def forbid_mutation():
+        app.config['cloud_mutations'] += 1
+        return jsonify(code='FIXTURE_CLOUD_MUTATION_FORBIDDEN'), 403
     @app.post('/api/auth/login')
     def login():
         if request.json != {'username':'synthetic-fixture','password':'synthetic-fixture-password','role':'customer'}:
@@ -42,6 +56,7 @@ def main():
     parser.add_argument('--data-dir', required=True)
     parser.add_argument('--evidence-dir', required=True)
     parser.add_argument('--bundle', help='Test the extracted customer launch.py instead of repository MCP')
+    parser.add_argument('--mode', choices=('platform', 'byok'), default='platform')
     args = parser.parse_args()
     data_root = Path(args.data_dir).resolve()
     if data_root.exists():
@@ -57,7 +72,9 @@ def main():
     runtime_root = Path(args.bundle).resolve() / 'runtime' if args.bundle else ROOT
     daemon_python = Path(args.bundle).resolve()/'.venv'/('Scripts/python.exe' if os.name=='nt' else 'bin/python') if args.bundle else Path(sys.executable)
     daemon = subprocess.Popen([str(daemon_python),'-m','yzzh_local.app','--data-dir',str(data_root),
-        '--port',str(port),'--development','--login-url',f'http://127.0.0.1:{server.server_port}/api/auth/login'],
+        '--port',str(port),'--development','--mode',args.mode,
+        '--platform-url',f'http://127.0.0.1:{server.server_port}',
+        '--login-url',f'http://127.0.0.1:{server.server_port}/api/auth/login'],
         cwd=runtime_root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     deadline = time.monotonic()+20
     while not (data_root/'connection.json').exists():
@@ -95,6 +112,12 @@ def main():
         initialized = rpc('initialize', {'protocolVersion':'2025-06-18', 'clientInfo':{'name':'offline-smoke','version':'1'}, 'capabilities':{}})
         child.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'}) + '\n'); child.stdin.flush()
         names = [x['name'] for x in rpc('tools/list')['tools']]
+        health = tool('health')
+        assert health['mode'] == args.mode and health['logged_in'] is True
+        for page in ('/', '/projects/wardrobe', '/projects/long-video', '/projects/real-long-video'):
+            response = requests.get(f'http://127.0.0.1:{port}' + page,
+                headers={'X-Yzzh-Session':info['session']},timeout=15)
+            assert response.status_code == 200, page
         project = tool('import_video', path=str(fixture))
         project_id = project['id']; source_id = next(iter(project['artifacts']))
         tool('process', project_id=project_id, artifact_id=source_id, operation='split')
@@ -129,8 +152,10 @@ def main():
                   'state':'ready', 'export':export, 'duration':inspect_video(export['path']).duration,
                   'original_workflow':{'job_id':original_id,'status':original_job['status'],'shots':2,'decoded':True,
                                        'artifact':str(original_export)},
-                  'version':initialized['serverInfo']['version'], 'mode':'byok',
+                  'version':initialized['serverInfo']['version'], 'mode':health['mode'],
+                  'cloud_mutations':server.app.config['cloud_mutations'],
                   'boundary':'Loopback fixture product-4 login + real synthetic local processing; no real account, provider, billing or installed host acceptance.'}
+        assert report['cloud_mutations'] == 0, 'Local smoke check must never submit media or generation'
         (evidence / 'runtime-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
         print(json.dumps(report, ensure_ascii=False))
     finally:
