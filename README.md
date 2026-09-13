@@ -2,7 +2,7 @@
 
 ## 下载与安装插件（0.5.0 平台模式预览）
 
-下载 [2026-09-13 平台模式预览版](https://github.com/wangge666666/czmykj-yzzh/releases/tag/v0.5.0-preview.20260913) 中的 `czmiyou-yzzh-0.5.0-platform-preview-20260913.zip`，不要下载 GitHub 自动生成的 Source code ZIP 来安装。仓库目前为私有，下载需要相应 GitHub 访问权限；不能把链接可见等同于普通客户可下载。
+下载 [2026-09-13 平台模式预览版](https://github.com/wangge666666/czmykj-yzzh/releases/tag/v0.5.0-preview.20260913) 中的 `czmiyou-yzzh-0.5.0-platform-preview-20260913.zip`，不要下载 GitHub 自动生成的 Source code ZIP 来安装。仓库和插件附件已公开，下载无需 GitHub 账号或仓库权限；平台功能仍需 CZMIYOU 登录和有效产品授权，公开下载不代表免费生成。
 
 普通用户安装插件并登录 CZMIYOU，在「我的应用 → 米哟无限复刻」进入本机三项目首页：衣装智换、虚拟人物复刻重绘、写实虚拟人像复刻重绘。新后台默认平台模式，用户无需填写供应商 Key、AK/SK 或 TOS；服务由管理员在服务器配置，按产品 4 / `miyo_fashion` 权限、通道和中央计费规则执行。时间卡资格不等于批准消费，上传与生成仍需用户确认。
 
