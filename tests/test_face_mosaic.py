@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import Mock
 
 import numpy as np
 
 from face_mosaic import (
     FaceBoxTracker,
     apply_pixel_mosaic,
+    detect_faces_all_orientations,
     expand_face_box,
     select_eye_privacy_face,
     select_eye_privacy_faces,
@@ -15,6 +17,17 @@ from workflow_core import WorkflowError
 
 
 class FaceMosaicTests(unittest.TestCase):
+    def test_rotation_detection_maps_all_directions_and_keeps_multiple_people(self):
+        detector = Mock()
+        # Original frame width=200, height=100. The upright face appears twice;
+        # two additional faces are detected only in the 180 and 270 degree views.
+        detector.detect.side_effect = [
+            [(10,20,20,30)], [(50,10,30,20)], [(110,50,20,30)], [(10,40,20,20)],
+        ]
+        faces = detect_faces_all_orientations(detector, np.zeros((100,200,3),np.uint8))
+        self.assertEqual(detector.detect.call_count,4)
+        self.assertEqual(faces,[(10,20,20,30),(70,20,20,30),(140,10,20,20)])
+
     def test_expanded_box_covers_more_than_detected_face_and_stays_in_frame(self) -> None:
         expanded = expand_face_box((4, 6, 30, 40), 100, 80)
         x, y, width, height = expanded

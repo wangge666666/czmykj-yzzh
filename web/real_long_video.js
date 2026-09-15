@@ -1020,6 +1020,7 @@ function shotCard(shot, job) {
     const detected = personSlots[offset] || {};
     const position = performanceSlotAnchor(shot, offset + 1);
     const characterId = continuityCharacterFor(shot, offset + 1);
+    const modelColor = ({red:"红",white:"白",blue:"蓝",yellow:"黄"})[shot.white_color_plan?.find(r => r.id === `p${offset+1}`)?.color] || "";
     const hasSemanticSlot = (shot?.performance?.performance || []).some((item) => Number(item.actor_slot) === offset + 1);
     const confidence = hasSemanticSlot
       ? " · 来自台词表演分析"
@@ -1028,7 +1029,7 @@ function shotCard(shot, job) {
       `<option value="${optionId}" ${optionId === actorId ? "selected" : ""}>人物${optionId} · ${escapeHtml(actorRole(optionId))}</option>`
     ).join("");
     const continuityNote = characterId ? " · C身份仅供自动建议，人工选择只作用于本镜" : "";
-    return `<div class="person-map-row"><span><b>表演槽位 P${offset + 1}${characterId ? ` · 原片身份 C${characterId}` : ""}</b><small>${escapeHtml(position)}${confidence}${continuityNote}</small></span><i>替换为</i><select data-person-mapping="${index}" data-person-slot="${offset + 1}" ${disabled}>${options}</select><label class="position-lock-field"><span>位置与动作锁定</span><input data-position-lock="${index}" data-position-slot="${offset + 1}" maxlength="220" value="${escapeHtml(positionLockValue(shot, offset + 1))}" placeholder="例如：左侧内景坐着，较小；右侧前景站着，较大" ${disabled}></label></div>`;
+    return `<div class="person-map-row"><span><b>表演槽位 P${offset + 1}${modelColor ? ` · ${modelColor}模` : ""}${characterId ? ` · 原片身份 C${characterId}` : ""}</b><small>${escapeHtml(position)}${confidence}${continuityNote}</small></span><i>替换为</i><select data-person-mapping="${index}" data-person-slot="${offset + 1}" ${disabled}>${options}</select><label class="position-lock-field"><span>位置与动作锁定</span><input data-position-lock="${index}" data-position-slot="${offset + 1}" maxlength="220" value="${escapeHtml(positionLockValue(shot, offset + 1))}" placeholder="例如：左侧内景坐着，较小；右侧前景站着，较大" ${disabled}></label></div>`;
   }).join("");
   const assignment = sceneAssignmentFor(index);
   const selectedGroup = assignment ? sceneGroupById(assignment.groupId) : null;
@@ -1182,7 +1183,13 @@ function renderShotGrid() {
         );
       }
     }
-    if (shot.has_white_model) {
+    const canRetryWhiteModel = shot.has_mosaic && (
+      shot.has_white_model
+      || shot.status === "failed"
+      || shot.status === "retryable"
+      || Boolean(shot.error)
+    );
+    if (canRetryWhiteModel) {
       const actionRow = card.querySelector(".shot-artifact-row");
       if (actionRow) {
         const completedAttempts = Number(shot.white_model_total_generation_count || 0)
@@ -1622,6 +1629,7 @@ async function analyzePerformance() {
 }
 
 function appendWhiteModelVideoOptions(form) {
+  form.append("colored_cast", document.querySelector("#coloredCastEnabled")?.checked ? "true" : "false");
   const seedance20 = (state.config?.real_final_video_models || []).find((item) => item.id === "seedance_2_0");
   form.append("model", seedance20?.model || "doubao-seedance-2-0-260128");
   form.append("resolution", "480p");
@@ -1670,9 +1678,9 @@ async function generateWhiteModel() {
 
 async function regenerateWhiteModelShot(index) {
   const shot = (state.lastJob?.shots || []).find((item) => Number(item.index) === Number(index));
-  if (!shot?.has_white_model) return toast(`分镜 ${String(index).padStart(2, "0")} 还没有可重新生成的白模。`, true);
+  if (!shot?.has_mosaic) return toast(`分镜 ${String(index).padStart(2, "0")} 还没有可用的打码视频，不能生成白模。`, true);
   const completedAttempts = Number(shot.white_model_total_generation_count || 0)
-    || Math.max(1, Number(shot.white_model_retry_count || 0) + 1);
+    || (shot.has_white_model ? Math.max(1, Number(shot.white_model_retry_count || 0) + 1) : 0);
   const needsRenewedCostConfirmation = completedAttempts >= 2;
   const confirmation = needsRenewedCostConfirmation
     ? `分镜 ${String(index).padStart(2, "0")} 已完成 ${completedAttempts} 次付费白模生成，自动纠偏额度已经用完。\n\n本次经你确认后，只会额外提交 1 个 Seedance 2.0 / 480p 付费任务；无论质检是否通过，都不会自动追加下一次付费生成。其他分镜不会改动。\n\n确认承担本次单镜生成费用并继续吗？`

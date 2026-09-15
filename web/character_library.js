@@ -1,6 +1,12 @@
 (function () {
   const path = window.location.pathname.replace(/\/$/, "");
   const configs = {
+    "/projects/wardrobe-continuation": {
+      host: "#characters",
+      title: "选择改写视频中的人物",
+      note: "上传新人物并审核入库，或选择已有角色。@图片1 提供人物身份，服装在下方单独上传。",
+      empty: "请选择已审核通过的人物，或上传新人物到角色库。",
+    },
     "/projects/wardrobe": {
       host: "#characters",
       title: "选择当前模式使用的人物角色",
@@ -96,12 +102,28 @@
 
   const panel = document.createElement("section");
   panel.className = "shared-character-library";
-  const wardrobeActorLayout = path === "/projects/wardrobe" || path === "/wardrobe-swap";
-  const uploadButtonLabel = wardrobeActorLayout ? "审核并上传此人物到角色库" : "审核并上传角色库";
+  const stylesheet = document.createElement('link'); stylesheet.rel = 'stylesheet';
+  stylesheet.href = '/static/character_library.css?v=20260915-upload1'; document.head.append(stylesheet);
+  const wardrobeActorLayout = path === "/projects/wardrobe" || path === "/wardrobe-swap" || path === "/projects/wardrobe-continuation";
+  const uploadButtonLabel = wardrobeActorLayout ? "上传素材并用于当前人物" : "审核并上传角色库";
   const managerMarkup = `
-    <div class="shared-character-manager-grid">
-      <section><b>创建 AIGC 人像组</b><label><span>人像组名称</span><input type="text" maxlength="64" data-character-group-name placeholder="例如：女主角库"></label><label><span>说明（可选）</span><input type="text" maxlength="300" data-character-group-description placeholder="角色用途或项目说明"></label><button type="button" data-character-create-group>创建人像组</button></section>
-      <section><b>上传人物到角色库</b><label><span>目标人像组</span><select data-character-upload-group><option value="">请选择人像组</option></select></label><label><span>素材名称</span><input type="text" maxlength="64" data-character-upload-name placeholder="例如：便利店女店员"></label><label class="shared-character-file"><span>人物图片</span><input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-character-upload-file><small data-character-file-name>JPG / PNG / WEBP，最大 30MB</small></label><label class="shared-character-consent"><input type="checkbox" data-character-consent><span>我确认拥有该人物素材及本次生成用途的合法授权</span></label><button type="button" data-character-upload>${uploadButtonLabel}</button></section>
+    <div class="shared-character-uploader">
+      <section data-character-upload-section>
+        <b>从电脑上传新的图片素材</b>
+        <div class="shared-character-file" data-character-file-area>
+          <input id="characterUploadFile" name="asset_file" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-character-upload-file hidden>
+          <button type="button" data-character-pick>＋ 选择图片素材</button>
+          <small data-character-file-name>选择电脑中的 JPG / PNG / WEBP 图片，最大 30MB；也可以拖入图片。</small>
+        </div>
+        <div class="shared-character-upload-fields">
+          <label><span>保存到素材组</span><select data-character-upload-group><option value="">请选择素材组</option></select></label>
+          <label><span>素材名称</span><input type="text" maxlength="64" data-character-upload-name placeholder="选择图片后自动填写，可修改"></label>
+        </div>
+        <label class="shared-character-consent"><input type="checkbox" data-character-consent><span>我确认拥有该人物素材及本次生成用途的合法授权</span></label>
+        <button type="button" data-character-upload>${uploadButtonLabel}</button>
+        <p data-character-upload-status role="status" aria-live="polite">选择图片并确认预览后，点击上方按钮上传。审核通过后自动用于当前人物。</p>
+      </section>
+      <details data-character-new-group><summary>需要新的素材组？点此创建</summary><label><span>人像组名称</span><input type="text" maxlength="64" data-character-group-name placeholder="例如：女主角库"></label><label><span>说明（可选）</span><input type="text" maxlength="300" data-character-group-description placeholder="角色用途或项目说明"></label><button type="button" data-character-create-group>创建人像组</button></details>
     </div>`;
   const libraryBody = wardrobeActorLayout ? `
     <div class="shared-character-source-buttons" role="group" aria-label="人物身份来源">
@@ -109,7 +131,7 @@
       <button type="button" data-character-source-mode="existing" class="active">使用角色库已有角色</button>
     </div>
     <div class="shared-character-source-pane hidden" data-character-upload-pane>
-      <div class="shared-character-pane-heading"><div><b>上传新人物</b><small>创建或选择 AIGC 人像组，上传图片并等待状态变为 Active。</small></div><span>上传并审核</span></div>
+      <div class="shared-character-pane-heading"><div><b>上传新人物</b><small>新图片无需事先在角色库中：选择本地图片，预览后上传即可。</small></div><span>选择图片 → 预览 → 上传使用</span></div>
       ${managerMarkup}
     </div>
     <div class="shared-character-source-pane" data-character-existing-pane>
@@ -145,11 +167,47 @@
   else host.prepend(panel);
 
   const state = { library: { configured: false, groups: [], assets: [] }, loading: false, pendingDelete: "", sourceMode: "existing", processingRefreshTimer: 0 };
+  const pendingUploads = new Map(), uploadMessages = new Map();
+  let uploading = false, generatedName = '';
   const within = (selector) => panel.querySelector(selector);
   const activeAssets = () => (state.library.assets || []).filter((asset) =>
     asset.status === "Active" && (!asset.asset_type || asset.asset_type === "Image")
   );
-  const selectedUri = () => personAssetInput.value.trim();
+  let selectionTarget = null;
+  const selectedUri = () => selectionTarget?.getUri ? selectionTarget.getUri() : personAssetInput.value.trim();
+  const targetKey = target => target?.key || 'primary';
+  const targetUri = target => target?.getUri ? target.getUri() : personAssetInput.value.trim();
+  const changed = () => document.dispatchEvent(new Event('inline-cast-change'));
+  function uploadMessage(key, text, error = false) {
+    uploadMessages.set(key, {text, error}); renderUploadState();
+  }
+  function renderUploadState() {
+    const key = targetKey(selectionTarget), pending = pendingUploads.get(key), message = uploadMessages.get(key);
+    const button = within('[data-character-upload]');
+    button.disabled = uploading || !!pending;
+    button.textContent = uploading ? '正在上传图片…' : pending ? '图片已上传，等待审核…' : selectionTarget?.label ? `上传素材并用于${selectionTarget.label}` : uploadButtonLabel;
+    const status = within('[data-character-upload-status]');
+    status.textContent = message?.text || '选择图片并确认预览后，点击上方按钮上传。审核通过后自动用于当前人物。';
+    status.classList.toggle('error', !!message?.error);
+  }
+  function applyUploadedAssets() {
+    if (panel.inert) return;
+    for (const [key, pending] of pendingUploads) {
+      const asset = state.library.assets.find(item => item.uri === pending.uri);
+      if (!asset) continue;
+      if (asset.status === 'Active') {
+        pendingUploads.delete(key);
+        const applied = targetUri(pending.target) === pending.previousUri && setSelected(asset.uri, pending.target);
+        uploadMessage(key, applied ? `“${pending.name}”已上传并用于${pending.target?.label || '当前人物'}。` : `“${pending.name}”已入库，可从角色库中选择。`);
+        changed();
+      } else if (asset.status && asset.status !== 'Processing') {
+        pendingUploads.delete(key);
+        uploadMessage(key, `“${pending.name}”未通过审核（${asset.status}），请更换图片后重新上传。`, true);
+        changed();
+      }
+    }
+    renderUploadState();
+  }
 
   function setSourceMode(mode) {
     if (!wardrobeActorLayout) return;
@@ -161,7 +219,12 @@
     within("[data-character-existing-pane]").classList.toggle("hidden", state.sourceMode !== "existing");
   }
 
-  function setSelected(uri) {
+  function setSelected(uri, target = selectionTarget) {
+    pendingUploads.delete(targetKey(target));
+    if (target?.onSelect) {
+      if (target.onSelect(uri || "") === false) return false;
+      renderSelected(); renderAssets(); renderUploadState(); target.onSelected?.(uri || ""); return true;
+    }
     personAssetInput.value = uri || "";
     try {
       if (uri) localStorage.setItem(storageKey, uri);
@@ -171,15 +234,19 @@
     personAssetInput.dispatchEvent(new Event("change", { bubbles: true }));
     renderSelected();
     renderAssets();
+    renderUploadState();
+    target?.onSelected?.(uri || "");
+    return true;
   }
 
   function renderSelected() {
     const uri = selectedUri();
     const asset = (state.library.assets || []).find((item) => item.uri === uri);
     const group = (state.library.groups || []).find((item) => item.id === asset?.group_id);
+    const label = escapeHtml(selectionTarget?.label ? `${selectionTarget.label}当前形象` : "当前生成使用");
     within("[data-character-selected]").innerHTML = uri
-      ? `<div><span>当前生成使用</span><b>${escapeHtml(asset?.name || "已绑定火山角色")}</b><small>${escapeHtml(group?.name || "AIGC 角色库")} · ${escapeHtml(uri)}</small></div><i>已选择</i>`
-      : `<div><span>当前生成使用</span><b>未选择角色库人物</b><small>${escapeHtml(config.empty)}</small></div><i class="empty">可选</i>`;
+      ? `<div><span>${label}</span><b>${escapeHtml(asset?.name || "已绑定火山角色")}</b><small>${escapeHtml(group?.name || "AIGC 角色库")} · ${escapeHtml(uri)}</small></div><i>已选择</i>`
+      : `<div><span>${label}</span><b>未选择角色库人物</b><small>${escapeHtml(config.empty)}</small></div><i class="empty">可选</i>`;
   }
 
   function groupOptions(includeAll = true) {
@@ -190,7 +257,7 @@
 
   function renderAssets() {
     const filter = within("[data-character-group-filter]").value;
-    const all = state.library.assets || [];
+    const all = (state.library.assets || []).filter(asset => !asset.asset_type || asset.asset_type === "Image");
     const visible = all.filter((asset) => !filter || asset.group_id === filter);
     const groupMap = new Map((state.library.groups || []).map((group) => [group.id, group]));
     within("[data-character-assets]").innerHTML = visible.length ? visible.map((asset) => {
@@ -212,22 +279,29 @@
     if (groups.some((group) => group.id === previousFilter)) within("[data-character-group-filter]").value = previousFilter;
     if (groups.some((group) => group.id === previousUploadGroup)) within("[data-character-upload-group]").value = previousUploadGroup;
     else if (groups.length === 1) within("[data-character-upload-group]").value = groups[0].id;
+    else {
+      const selectedGroup = state.library.assets.find(asset => asset.uri === selectedUri())?.group_id;
+      if (groups.some(group => group.id === selectedGroup)) within('[data-character-upload-group]').value = selectedGroup;
+    }
+    within('[data-character-new-group]').open = groups.length === 0;
     const activeCount = activeAssets().length;
     const status = state.library.configured
       ? `${groups.length} 个人像组 · ${activeCount} 个可用角色${state.library.stale ? " · 当前显示缓存" : ""}`
       : "角色库尚未配置";
     const message = state.library.message ? ` · ${state.library.message}` : "";
     within("[data-character-state]").textContent = `${status}${message}`;
+    applyUploadedAssets();
     renderSelected();
     renderAssets();
     scheduleProcessingRefresh();
+    document.dispatchEvent(new Event("character-library-loaded"));
   }
 
   function scheduleProcessingRefresh() {
     if (!wardrobeActorLayout) return;
     if (state.processingRefreshTimer) window.clearTimeout(state.processingRefreshTimer);
     state.processingRefreshTimer = 0;
-    const hasProcessing = (state.library.assets || []).some((asset) => asset.status === "Processing");
+    const hasProcessing = pendingUploads.size || (state.library.assets || []).some((asset) => asset.status === "Processing");
     if (!hasProcessing) return;
     state.processingRefreshTimer = window.setTimeout(async () => {
       state.processingRefreshTimer = 0;
@@ -276,30 +350,54 @@
   }
 
   async function uploadAsset() {
+    const target = selectionTarget, key = targetKey(target);
+    if (uploading || pendingUploads.has(key)) return;
     const groupId = within("[data-character-upload-group]").value;
     const name = within("[data-character-upload-name]").value.trim();
     const file = within("[data-character-upload-file]").files[0];
-    if (!groupId) return notify("请先选择目标 AIGC 人像组。", true);
-    if (!name) return notify("请填写人物素材名称。", true);
-    if (!file) return notify("请选择需要上传的人物图片。", true);
-    if (!within("[data-character-consent]").checked) return notify("请先确认人物素材授权。", true);
-    const button = within("[data-character-upload]");
-    button.disabled = true;
-    button.textContent = "正在提交审核…";
+    const invalid = (message, selector) => { uploadMessage(key, message, true); within(selector).focus(); };
+    if (!file) return invalid('请先点击“选择图片素材”，选择电脑中的新人物图片。', '[data-character-pick]');
+    if (!groupId) return invalid('请选择保存到哪个素材组；已有素材组可以直接使用，无需重新创建。', '[data-character-upload-group]');
+    if (!name) return invalid('请填写人物素材名称。', '[data-character-upload-name]');
+    if (!within("[data-character-consent]").checked) return invalid('请勾选人物素材授权确认。', '[data-character-consent]');
+    uploading = true;
+    const pending = {target, previousUri: targetUri(target), uri: '', name};
+    pendingUploads.set(key, pending);
+    uploadMessage(key, `正在上传“${name}”…`); changed();
     try {
       const form = new FormData();
       form.append("group_id", groupId);
       form.append("name", name);
       form.append("asset_file", file);
       const result = await request("/api/character-library/assets", { method: "POST", body: form });
-      within("[data-character-upload-name]").value = "";
-      within("[data-character-upload-file]").value = "";
-      within("[data-character-file-name]").textContent = "JPG / PNG / WEBP，最大 30MB";
+      pending.uri = result.uri || (result.asset_id ? `asset://${result.asset_id}` : '');
+      if (!pending.uri) throw Error('未收到素材入库结果，请刷新角色库核对后再试。');
+      if (within('[data-character-upload-file]').files[0] === file) within('[data-character-upload-file]').value = '';
+      uploadMessage(key, `“${name}”已上传，正在审核；通过后自动用于${target?.label || '当前人物'}。`);
       await loadLibrary();
-      setSourceMode("existing");
-      notify(result.message || "人物已提交角色库审核。", false);
-    } catch (error) { notify(error.message, true); }
-    finally { button.disabled = false; button.textContent = uploadButtonLabel; }
+      scheduleProcessingRefresh();
+    } catch (error) {
+      if (pendingUploads.get(key) === pending) pendingUploads.delete(key);
+      uploadMessage(key, error.message, true);
+    } finally { uploading = false; renderUploadState(); changed(); }
+  }
+
+  function fileChosen() {
+    const input = within('[data-character-upload-file]'), file = input.files[0];
+    if (!file) return;
+    const key = targetKey(selectionTarget);
+    if (!/\.(jpg|jpeg|png|webp)$/i.test(file.name) || !file.size || file.size > 30 * 1024 * 1024) {
+      input.value = ''; window.DepthFlowUploadPreview?.refresh(input);
+      return uploadMessage(key, '请选择不超过 30MB 的 JPG、PNG 或 WEBP 图片。', true);
+    }
+    within('[data-character-file-name]').textContent = `已选择：${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB）`;
+    within('[data-character-pick]').textContent = '重新选择图片素材';
+    const nameInput = within('[data-character-upload-name]');
+    if (!nameInput.value.trim() || nameInput.value === generatedName) {
+      generatedName = file.name.replace(/\.[^.]+$/, '').slice(0, 64); nameInput.value = generatedName;
+    }
+    window.DepthFlowUploadPreview?.refresh(input);
+    if (!pendingUploads.has(key)) uploadMessage(key, '图片已选好，请确认预览和保存的素材组，再点击“上传素材并用于人物”按钮。');
   }
 
   function askDelete(assetId) {
@@ -336,13 +434,14 @@
 
   async function selectAsset(button) {
     const uri = button.dataset.characterSelect;
+    const target = selectionTarget;
     if (button.dataset.characterUnavailable && wardrobeActorLayout) {
       notify("正在向火山查询该人物的最新审核状态…", false);
       await loadLibrary();
       const refreshed = (state.library.assets || []).find((asset) => asset.uri === uri);
       const active = refreshed?.status === "Active" && (!refreshed.asset_type || refreshed.asset_type === "Image");
       if (active) {
-        setSelected(uri);
+        if (!setSelected(uri, target)) return;
         return notify("该人物已经通过审核，现已选择使用。", false);
       }
       return notify(`该人物尚不可用：${refreshed?.status || button.dataset.characterUnavailable}。请等待状态变为 Active。`, true);
@@ -350,13 +449,15 @@
     if (button.dataset.characterUnavailable) {
       return notify(`该人物尚不可用：${button.dataset.characterUnavailable}。请等待状态变为 Active。`, true);
     }
-    setSelected(uri);
-    notify("已选择火山角色；生成时会将该 Asset 作为人物身份参考。", false);
+    if (!setSelected(uri, target)) return;
+    const name = state.library.assets.find(asset => asset.uri === uri)?.name || "所选角色";
+    notify(target?.label ? `${target.label}已更新为：${name}` : "已选择火山角色；生成时会将该 Asset 作为人物身份参考。", false);
   }
 
   panel.addEventListener("click", async (event) => {
     const sourceMode = event.target.closest("[data-character-source-mode]");
     if (sourceMode) setSourceMode(sourceMode.dataset.characterSourceMode);
+    else if (event.target.closest('[data-character-pick]')) within('[data-character-upload-file]').click();
     else if (event.target.closest("[data-character-refresh]")) loadLibrary();
     else if (event.target.closest("[data-character-clear]")) { setSelected(""); notify("已取消角色库人物绑定。", false); }
     else if (event.target.closest("[data-character-create-group]")) createGroup();
@@ -372,8 +473,14 @@
     }
   });
   within("[data-character-group-filter]").addEventListener("change", renderAssets);
-  within("[data-character-upload-file]").addEventListener("change", (event) => {
-    within("[data-character-file-name]").textContent = event.target.files[0]?.name || "JPG / PNG / WEBP，最大 30MB";
+  within('[data-character-upload-file]').addEventListener('change', fileChosen);
+  const fileArea = within('[data-character-file-area]');
+  fileArea.addEventListener('dragover', event => { event.preventDefault(); });
+  fileArea.addEventListener('drop', event => {
+    event.preventDefault();
+    if (uploading || !event.dataTransfer?.files.length) return;
+    const input = within('[data-character-upload-file]'); input.files = event.dataTransfer.files;
+    input.dispatchEvent(new Event('change', {bubbles:true}));
   });
   personAssetInput.addEventListener("input", () => { renderSelected(); renderAssets(); });
   document.querySelector("#personImage")?.addEventListener("change", (event) => {
@@ -382,5 +489,19 @@
   renderSelected();
   setSourceMode("existing");
   loadLibrary();
-  window.DepthFlowCharacterLibrary = { refresh: loadLibrary, selected: selectedUri };
+  window.DepthFlowCharacterLibrary = { refresh: loadLibrary, selected: () => personAssetInput.value.trim(), assets: () => state.library.assets || [],
+    lock(value) { panel.inert = !!value; },
+    pickFile() { within('[data-character-upload-file]').click(); },
+    uploadProblem() { return uploading ? '人物图片正在上传，请等待上传完成。' : pendingUploads.size ? '新人物图片正在审核，通过后自动绑定，请稍候或刷新角色库。' : ''; },
+    choose(target, options = {}) {
+      selectionTarget = target;
+      panel.querySelector('h3').textContent = target ? `为${target.label}上传或选择形象` : config.title;
+      if (options.sourceMode) setSourceMode(options.sourceMode);
+      if (options.sourceMode === 'upload' && !within('[data-character-upload-group]').value) {
+        const group = state.library.assets.find(asset => asset.uri === selectedUri())?.group_id;
+        if (state.library.groups.some(item => item.id === group && item.group_type === 'AIGC')) within('[data-character-upload-group]').value = group;
+      }
+      renderSelected(); renderAssets(); renderUploadState();
+    }
+  };
 })();

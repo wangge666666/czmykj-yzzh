@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>按秒改写视频 · 衣装智换</title>
+<link rel="stylesheet" href="/static/styles.css?v=20260825-1"><link rel="stylesheet" href="/static/workflow_shell.css?v=20260825-2"><link rel="stylesheet" href="/static/wardrobe_continuation.css?v=20260914-5"></head>
+<body><header><a href="/projects/wardrobe">← 衣装智换</a><span>按秒改写工作台</span></header>
+<form id="rewriteForm"><main><section class="hero"><small>VIDEO INTERVAL EDITOR</small><h1>选中哪几秒，就改写哪几秒</h1><p>可以修改开头、中间、结尾，也可以一次添加多个区间，分别填写新的动作或剧情。根据完整参考视频一次生成，将指定秒数的改写要求交给模型执行，其余部分要求尽量保持原样。</p><p class="muted">所有秒数都以原片为准，支持多个区间和小数秒。完整参考视频支持 2–15 秒；成片效果与时长需预览确认。</p></section>
+<section class="panel"><h2>01 · 选择素材流程，准备原片</h2>
+  <div class="workflow-choices" role="group" aria-label="改写素材流程">
+    <button type="button" data-rewrite-workflow="library" aria-pressed="true"><b>无人物、服装参考</b><small>原片加入角色库 / 选择已有视频 → 提示词改写</small></button>
+    <button type="button" data-rewrite-workflow="references" aria-pressed="false"><b>有人物、服装参考</b><small>原片人脸打码 → 人物图 + 服装图 + 提示词改写</small></button>
+  </div>
+  <p id="workflowNote" class="muted"></p>
+  <div id="videoLibraryPane">
+    <div class="source-actions"><button id="chooseLibrary" type="button">从角色库选择 / 更换原片</button><button id="chooseUpload" type="button">上传新原片至角色库</button><button id="cancelSource" class="hidden" type="button">取消更换，继续使用当前原片</button></div>
+    <div class="settings"><label>素材组<select id="videoGroup"><option value="">请选择素材组</option></select></label><label id="videoAssetField">组内视频<select id="videoAsset"><option value="">请先选择素材组</option></select></label></div>
+    <div id="libraryUploadPane" class="hidden"><label>原片名称<input id="videoName" maxlength="64" placeholder="选择视频后自动填写"></label><label>本地原片<input id="libraryVideoFile" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"></label><small>角色库直接引用原片支持 2–15 秒，较长原片请先裁剪。</small><video id="uploadVideoPreview" controls playsinline class="hidden"></video><button id="uploadVideoBtn" type="button" class="primary">上传原片至角色库</button><p id="uploadReason" class="muted"></p></div>
+    <div id="libraryCandidate"><video id="candidateVideo" controls playsinline class="hidden"></video><p id="candidateStatus" role="status"></p><button id="useVideoBtn" type="button" disabled>使用此原片</button></div>
+    <button id="refreshVideos" type="button">刷新素材与审核状态</button><p id="libraryMessage" role="status"></p><p id="uploadStatus" role="status"></p><button id="useUploadedVideo" type="button" class="hidden">使用这份已入库原片</button>
+  </div>
+  <div id="localSourcePane" class="hidden"><label>原片视频<input id="sourceFile" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"></label><small>完整参考视频支持 2–15 秒。上传后检测全部人脸并打码。</small><div id="mosaicControls"><label>人脸检测阈值<input id="faceThreshold" type="number" min="0.30" max="0.90" step="0.01" value="0.55"></label><small>数值越低越灵敏；检测到的人脸全部打码，漏码可调低后重新打码。</small><button id="mosaicBtn" type="button" class="primary">生成 / 重新打码（免费）</button><p id="mosaicReason" class="muted"></p></div></div>
+  <p id="sourceName" role="status">尚未选择原片。</p><video id="sourceVideo" controls playsinline class="hidden"></video>
+  <div id="mosaicReviewPane" class="hidden"><h3>人脸打码视频</h3><video id="mosaicVideo" controls playsinline></video><a id="mosaicDownload">下载打码视频</a><label class="check"><input id="mosaicReviewed" type="checkbox">已预览打码视频，出现的人脸已遮挡，没有明显漏码</label></div>
+  <p id="legacyNote" class="muted hidden"></p>
+</section>
+<section id="actorReferencePane" class="panel hidden"><h2>人物与服装参考</h2><fieldset id="referenceFields"><div id="characters"></div><input id="personAsset" type="hidden" name="person_asset"><label>服装参考 · @图片2<input id="clothingFile" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"></label><img id="clothingPreview" class="reference-image hidden" alt="服装参考预览"><small>人物参考对应 @图片1，服装对应 @图片2。请使用与保留片段一致的素材，以便自然衔接。</small></fieldset></section>
+<section class="panel"><h2>02 · 设置改写区间和要求</h2><p>例如：2–4 秒改为“人物转身看向镜头”，7–9 秒改为“人物拿起桌上的杯子”。</p><div id="rangeList"></div><button id="addRange" type="button">＋ 添加改写区间</button><div id="timelineBar" class="timeline-bar" aria-label="原片改写区间示意"></div><p id="timeline" class="muted"></p></section>
+<section class="panel"><h2>03 · 生成完整改写视频</h2>
+<div id="extraReferenceArea"><h3>其他参考图片（可选）</h3><p class="muted">需要指定物品、场景、造型或细节时，在这里添加参考图。两种素材流程都可使用，不上传也可以生成。</p><label>添加其他参考图片<input id="extraReferenceFiles" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple></label><p id="extraReferenceHint" class="muted"></p><div id="extraReferenceList" aria-label="其他参考图片预览"></div></div>
+<div class="settings"><label>生成清晰度<select id="resolution"><option value="720p">720p</option><option value="480p">480p</option></select></label><label class="check"><input id="generateAudio" type="checkbox" checked>生成视频声音</label></div><small>开启后由模型生成整条视频的声音；关闭后输出静音视频。</small><p id="lengthNote" class="muted"></p><button id="generateBtn" type="button" class="primary">生成完整改写视频</button><p id="generateReason" class="muted"></p></section>
+<section class="panel" id="results"><h2>04 · 预览与下载</h2><p id="stage">尚未开始</p><progress id="progress" max="100" value="0"></progress><pre id="logs"></pre><p id="error" role="alert"></p><button id="recoverBtn" type="button" class="hidden">恢复已提交任务（不重新生成）</button><div id="segmentResults" class="results"></div><article id="outputCard" class="hidden"><h3>完整成片 <a id="outputDownload">下载</a></h3><video id="outputVideo" controls playsinline></video></article></section></main></form>
+<dialog id="paidDialog"><form method="dialog"><h2>确认生成完整视频</h2><p id="paidDetails"></p><ul id="paidRanges"></ul><p id="paidCost"></p><div><button value="cancel">取消</button><button id="paidSubmit" value="confirm" class="primary">确认生成</button></div></form></dialog><p id="notice" role="status"></p>
+<template id="rangeTemplate"><article class="range-card"><div class="range-heading"><h3></h3><button type="button" class="remove-range">移除此段</button></div><div class="range-time"><label>开始（秒）<input class="range-start" type="number" min="0" step="0.01" value="2"></label><button type="button" class="use-start">取当前播放位置</button><label>结束（秒）<input class="range-end" type="number" min="0" step="0.01" value="4"></label><button type="button" class="use-end">取当前播放位置</button></div><label>这一段改成什么<textarea class="range-prompt" rows="3" maxlength="1000" placeholder="例如：人物停止向前走，转身看向镜头并挥手。"></textarea></label><div class="references"></div><small class="reference-note"></small></article></template>
+<script src="/static/character_library.js?v=20260915-upload4" defer></script>
+  <script src="/static/inline_cast.js?v=20260915-clothing7" defer></script><script src="/static/wardrobe_continuation.js?v=20260915-clothing7" defer></script><script src="/static/cast_entry.js?v=20260915-colors2" defer></script></body></html>

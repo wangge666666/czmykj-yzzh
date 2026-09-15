@@ -1,0 +1,86 @@
+<section id="objectWorkflow" class="panel">
+  <div class="panel-heading"><div><span>动态物品替换</span><h2>先选择你已有的素材</h2></div></div>
+  <div class="mode-grid object-workflow-choices" role="group" aria-label="物品替换流程">
+    <button type="button" class="mode-card" data-object-workflow="references"><i>1</i><span><b>有人物、服装参考</b><small>原片打码 → 主角白模 → 还原人物并替换物品</small></span></button>
+    <button type="button" class="mode-card" data-object-workflow="library"><i>2</i><span><b>无人物、服装参考</b><small>原片视频入库 → 直接引用原片替换物品</small></span></button>
+  </div>
+  <p id="objectWorkflowNote"></p>
+</section>
+<section id="objectSource" class="panel">
+  <div class="panel-heading"><div><span>准备视频</span><h2 id="objectSourceTitle">上传原片或已有主角白模</h2></div><small>单次制作使用 2–15 秒视频</small></div>
+  <div id="objectReferenceSource">
+    <label class="media-drop"><input id="objectOriginal" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"><b>上传原片，准备打码</b><small>超过15秒自动分段，全部原片都会保留</small></label>
+    <video id="objectOriginalPreview" class="media-preview hidden" controls playsinline preload="metadata"></video>
+    <div class="mosaic-setting"><label for="objectThreshold">人脸检测阈值（灵敏度）</label><input id="objectThreshold" type="number" min="0.30" max="0.90" step="0.01" value="0.55"><small>数值越低越灵敏；漏码可试 0.45。检测到的人脸全部打码，无需追踪指定主角。</small></div>
+    <button id="objectMosaic" type="button" class="primary-button">生成 / 重新打码（免费）</button>
+    <small id="objectMosaicHint" class="button-reason"></small>
+    <details class="object-upload-white"><summary>已有主角白模？直接上传，跳过打码与白模生成</summary>
+      <label class="media-drop"><input id="objectWhiteUpload" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"><b>选择已有主角白模视频</b><small>仅主角为白模，原场景与物品保持原样 · 2–15 秒</small></label>
+      <button id="objectImportWhite" type="button" class="secondary-button">使用上传的主角白模（免费）</button>
+    </details>
+  </div>
+  <div id="objectLibrarySource" class="hidden">
+    <div class="object-source-actions" role="group" aria-label="原片来源">
+      <button id="objectChooseLibrary" type="button" class="secondary-button" aria-pressed="true">从角色库选择 / 更换原片</button>
+      <button id="objectChooseUpload" type="button" class="secondary-button" aria-pressed="false">上传新原片</button>
+      <button id="objectCancelVideoChange" type="button" class="secondary-button hidden">取消更换，继续使用当前原片</button>
+    </div>
+    <p id="objectVideoChoiceHint" role="status">先选择素材组，再选择组内视频。预览后点击“使用此原片”，绑定为 @视频1。</p>
+    <div class="generation-settings"><label><span>素材组</span><select id="objectVideoGroup"><option value="">请选择素材组</option></select></label><label id="objectVideoAssetField"><span>组内原片视频</span><select id="objectVideoAsset" disabled><option value="">请先选择素材组</option></select></label></div>
+    <div id="objectNewVideoUpload" class="object-upload-white hidden"><h3>上传新原片至所选素材组</h3>
+      <p>先选择上方的素材组，再选择本地原片。视频名称会自动填写，也可以修改。</p>
+      <label><span>新原片名称</span><input id="objectVideoName" maxlength="64" placeholder="例如：拿杯子的运动镜头"></label>
+      <label class="media-drop"><input id="objectLibraryUpload" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"><b>选择要入库的原片视频</b><small>请先裁剪为本次制作的 2–15 秒；视频会上传至所选素材组审核</small></label>
+      <video id="objectUploadPreview" class="media-preview hidden" controls playsinline preload="metadata"></video>
+      <button id="objectUploadVideo" type="button" class="primary-button">上传原片至角色库</button>
+      <p id="objectUploadVideoHint" class="button-reason" role="status"></p>
+    </div>
+    <div id="objectVideoAssets" class="object-video-grid" aria-label="所选原片的视频预览"></div>
+    <p id="objectSelectedVideo" role="status"></p>
+    <video id="objectSelectedPreview" class="media-preview hidden" controls playsinline preload="metadata"></video>
+    <button id="objectRefreshVideos" type="button" class="secondary-button">刷新视频素材与审核状态</button>
+    <p id="objectUploadStatus" role="status"></p>
+    <button id="objectReuseVideo" type="button" class="secondary-button hidden">使用这份已入库原片</button>
+    <p id="objectLibraryMessage" role="status"></p>
+
+  </div>
+</section>
+<section id="objectPrepare" class="panel">
+  <div class="panel-heading"><div><span>主角白模</span><h2>预览打码，再生成主角白模</h2></div><small>只将主要人物变白，物品与背景保留原样</small></div>
+  <video id="objectMosaicPreview" class="media-preview hidden" controls playsinline preload="metadata"></video>
+  <a id="objectMosaicDownload" class="hidden" download>下载打码视频</a>
+  <label class="toggle-line"><input id="objectMosaicReviewed" type="checkbox"><span>已预览打码视频，出现的人脸已遮挡，没有明显漏码</span></label>
+  <details><summary>查看主角白模规则 / 补充主角说明</summary><pre id="objectWhiteBase"></pre><textarea id="objectWhitePrompt" rows="3" maxlength="500" placeholder="可选：说明哪位是主角，例如开头拿蓝色杯子的女子。@视频1 为打码视频。"></textarea></details>
+  <button id="objectMakeWhite" type="button" class="primary-button">生成主角白模 · Seedance 2.0 · 480p</button>
+  <small id="objectWhiteHint" class="button-reason"></small>
+</section>
+<section id="objectReferences" class="panel">
+  <div class="panel-heading"><div><span>准备参考</span><h2>人物、服装与物品</h2></div></div>
+  <div id="objectActorReferences">
+    <p>使用原片中人物及服装的参考，还原白模主角。人物图支持在下方上传入库或选择已有角色。</p>
+    <div id="objectCharacterHost"></div>
+    <label class="image-drop target-drop"><input id="objectClothing" type="file" accept="image/*"><span>绑定 @图片2</span><b>上传原片人物的服装参考图</b><small>人物身份由角色库图片提供，服装由本图提供</small></label>
+    <img id="objectClothingPreview" class="object-image-preview hidden" alt="服装参考预览">
+  </div>
+  <label class="toggle-line"><input id="objectSpecial" type="checkbox"><span>这是特殊物品，需要参考图准确指定外观</span></label>
+  <label class="image-drop target-drop"><input id="objectItem" type="file" accept="image/*"><span id="objectItemBinding">可选 · 绑定 @图片3</span><b>上传替换后的物品参考图</b><small>普通物品可以只写提示词；特殊物品必须附图</small></label>
+  <img id="objectItemPreview" class="object-image-preview hidden" alt="物品参考预览">
+  <button id="objectClearItem" type="button" class="secondary-button">移除物品参考图，改用文字描述</button>
+</section>
+<section id="objectGenerate" class="panel generation-panel">
+  <div class="panel-heading"><div><span>生成成片</span><h2>说明哪个物品，要换成什么</h2></div></div>
+  <div id="objectWhiteReview"><video id="objectWhitePreview" class="media-preview hidden" controls playsinline preload="metadata"></video><a id="objectWhiteDownload" class="hidden" download>下载主角白模</a><label class="toggle-line"><input id="objectWhiteReviewed" type="checkbox"><span>已预览：仅主要人物为白模，物品、背景、动作与运镜正确</span></label></div>
+  <div id="objectBindings" class="dynamic-reference-chips"></div>
+  <small>点击已就绪的素材标签插入引用，或输入 @ 选择素材。编号会随流程与实际上传素材更新。</small>
+  <div class="dynamic-prompt-editor"><textarea id="objectPrompt" rows="5" maxlength="1000" placeholder="例如：把女子右手的蓝色杯子替换为透明玻璃杯；保持握持、杯中水位和镜头运动。"></textarea><div id="objectMentions" class="hidden" role="listbox" aria-label="插入物品替换素材"></div></div>
+  <div class="generation-settings"><label><span>成片分辨率</span><select id="objectResolution"><option value="480p">480p · 预览</option><option value="720p" selected>720p · 成片</option></select></label><label class="audio-setting"><input id="objectAudio" type="checkbox" checked><span>保留原片声音并同步口型</span></label></div>
+  <button id="objectGenerateBtn" type="button" class="primary-button large-action">生成物品替换成片 · Seedance 2.5</button>
+  <p id="objectGenerateHint" class="button-reason"></p>
+</section>
+<section id="objectResults" class="panel result-panel">
+  <div class="panel-heading"><div><span>任务结果</span><h2 id="objectStage">等待准备素材</h2></div></div>
+  <pre id="objectLogs" class="job-logs">选择上方任一流程开始。</pre>
+  <button id="objectRecoverWhite" type="button" class="secondary-button hidden">恢复已提交的白模任务（不重复生成）</button>
+  <video id="objectOutput" class="media-preview hidden" controls playsinline preload="metadata"></video>
+  <a id="objectOutputDownload" class="hidden" download>下载最终成片</a>
+</section>

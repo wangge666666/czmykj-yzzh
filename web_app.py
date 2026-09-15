@@ -10,23 +10,32 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
 import webbrowser
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
 
 import cv2
 import numpy as np
 
-from flask import Flask, Response, jsonify, request, send_file, send_from_directory
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory, redirect
+import inline_cast
+import wardrobe_segments
+import wardrobe_audio
 from waitress import serve
 from werkzeug.datastructures import FileStorage
 
 from face_mosaic import render_eye_privacy_image, render_face_mosaic_video
+from wardrobe_dynamic import (
+    DYNAMIC_WHITE_PROMPT, DYNAMIC_FINAL_PROMPT, DYNAMIC_EDIT_PROFILES,
+    DYNAMIC_EDIT_MODES, DYNAMIC_ENVIRONMENT_MODES, dynamic_prompt, dynamic_target_description,
+)
 from performance_analysis import (
     ArkPerformanceAnalyzer,
     build_performance_prompt,
@@ -43,6 +52,8 @@ from long_video_core import (
     detect_video_shots,
     estimate_people_count,
     extend_video_with_trailing_hold,
+    pad_video_with_trailing_black,
+    video_has_audio,
     mux_original_audio,
     save_shot_manifest,
     split_video_shots,
@@ -70,6 +81,7 @@ from workflow_core import (
     TosMediaStore,
     WorkflowError,
     build_multi_seedance_payload,
+    build_motion_reference_payload,
     build_scene_seedance_payload,
     build_seedance_payload,
     build_video_reference_seedance_payload,
@@ -85,6 +97,7 @@ from workflow_core import (
 )
 
 from face_mosaic import YuNetFaceDetector, ensure_face_model
+from video_proxy_rules import BARE_PROXY_BODY, REMOVE_OVERLAY_TEXT, PROXY_DIALOGUE, FINAL_DIALOGUE
 
 
 WEB_DIR = PROJECT_DIR / "web"
@@ -324,6 +337,23 @@ DEFAULT_WHITE_MODEL_PROMPT = (
     "屏幕界面文字、Logo、品牌标识、平台角标或水印；台词只表现为嘴部动作，不得显示成文字。输出清晰稳定、高对比的白模绿幕视频。"
 )
 
+# The real-person workflow needs a stricter, identity-free proxy description than
+# the virtual-character workflow.  Keep this constant separate: changing it must
+# never invalidate or alter the already working virtual/wardrobe pipelines.
+REAL_PERSON_SAFE_WHITE_MODEL_PROMPT = (
+    "参考@视频1，将当前分镜转换为非写实CG动画动作代理母版。@视频1是人物数量、动作时序、身体姿态、手势、"
+    "头部朝向、站位、人物大小、前后景关系、遮挡、互动和移动路径的唯一逐帧依据；同时严格保持原镜头的机位、"
+    "焦段、平视俯拍仰拍关系、景别、裁切、透视、构图、对焦、切镜时点与运镜轨迹，不得重新构图、自动居中、"
+    "缩放人物、漏人、加人或交换人物位置。将每位人物替换为无身份的纯白CG动画绑定模型：头部为无五官、"
+    "无身份特征的光滑椭圆体，不保留原人物的脸部特征、头发、发型、胡须、帽子、眼镜、首饰或其他穿戴物；"
+    "头部动作只通过椭圆体整体转向和俯仰表达，下颌只用轻微的抽象几何形变对应原片说话节奏，不生成可辨认的脸。"
+    "全身采用连续完整、无图案、无身份特征的哑光白色工业动画模型外观，结构简洁明确，手部、关节和身体轮廓稳定清楚，"
+    "不得生成写实人体表面细节。仅保留动作中正在交互的必要道具，并统一简化为纯白几何模型；删除其他场景和装饰。"
+    "背景完整替换为均匀、干净、无渐变、无噪点的标准绿幕 #00B140，模型边缘清晰且没有绿色反光。禁止模糊、融化、"
+    "重影、闪烁、多肢、少肢、粘连、人物增减或动作漂移。画面任何位置、任何时间均不得出现字幕、台词文字、标题、"
+    "时间码、数字、招牌文字、界面文字、Logo、品牌标识、平台角标或水印。输出清晰、稳定、高对比的纯白CG动作代理绿幕视频。"
+)
+
 # 衣装智换会把最长 15 秒的单人素材整体提交给 Seedance。旧版共用提示词
 # 使用了“素体 / 解剖 / 裸露”等写实人体措辞，正常穿着的输入也可能在输出审核
 # 阶段被误判。该项目单独使用非写实工业动作人台，不改变其他已跑通项目。
@@ -337,13 +367,18 @@ WARDROBE_SAFE_WHITE_MODEL_PROMPT = (
     "手部、关节和人物轮廓必须稳定清楚。仅保留动作中正在使用的必要道具，并统一简化为纯白几何模型；删除其他场景与装饰。"
     "背景完整替换为均匀、干净、无渐变、无噪点的标准绿幕 #00B140，人物边缘清晰且没有绿色反光。禁止模糊、融化、重影、闪烁、"
     "多肢、少肢、粘连、人物增减或动作漂移。严禁出现字幕、台词文字、标题、时间码、数字、招牌文字、界面文字、Logo、品牌标识、"
-    "平台角标或水印；台词只保留嘴部运动，不显示文字。输出清晰、稳定、高对比的纯白工业动作人台绿幕视频。"
+    "平台角标或水印；台词保留声音与抽象下颌节奏，不显示文字。输出清晰、稳定、高对比的纯白工业动作人台绿幕视频。"
 )
 
+WARDROBE_SAFE_WHITE_MODEL_PROMPT = BARE_PROXY_BODY + WARDROBE_SAFE_WHITE_MODEL_PROMPT + REMOVE_OVERLAY_TEXT + PROXY_DIALOGUE
+
 WARDROBE_SWAP_PROJECT = "wardrobe_intelligent_swap"
-WARDROBE_SWAP_MODES = {"person", "scene", "clothing", "custom"}
+WARDROBE_SWAP_MODES = {"person", "scene", "clothing", "custom"} | DYNAMIC_EDIT_MODES
 WARDROBE_MAX_SOURCE_SECONDS = 15.0
 WARDROBE_MODE_LABELS = {
+    "dynamic": "动态场景更换人物",
+    "dynamic_object": "动态物品替换",
+    "dynamic_scene": "动态背景替换",
     "person": "只更换人物",
     "scene": "只更换场景",
     "clothing": "只更换服装",
@@ -357,13 +392,15 @@ def build_wardrobe_swap_prompt(mode: str) -> str:
     In every mode @视频1 is the generated white-model motion master.
     This keeps motion/camera control separate from identity, wardrobe and scene.
     """
+    if mode in DYNAMIC_EDIT_MODES:
+        return DYNAMIC_EDIT_PROFILES[mode]["final_prompt"]
     shared = (
         "@视频1是唯一动作与镜头母版。逐帧严格遵守它的切镜时刻、镜头机位、俯仰角、焦段、景别、裁切、透视、"
         "构图、运镜轨迹、人物数量、人物大小、左右站位、前后层级、遮挡关系、动作时序、姿态、手势、视线、"
         "表情和移动路径；不得重新构图、改变景别、漏人、增加人物或交换人物位置。白模只负责时空与表演控制，"
         "不得把白模的绿幕、白色材质、光头或无身份五官带入成片。最终输出自然、清晰、稳定的正常彩色视频。"
         "禁止生成字幕、台词文字、标题、时间码、说明文字、平台角标、Logo或水印；场景中原本真实存在的招牌与"
-        "环境文字可以自然保留，但不得新增任何叠加文字。"
+        "环境文字可以自然保留，但不得新增任何叠加文字。" + REMOVE_OVERLAY_TEXT + FINAL_DIALOGUE
     )
     if mode == "person":
         return (
@@ -385,10 +422,12 @@ def build_wardrobe_swap_prompt(mode: str) -> str:
         )
     if mode == "custom":
         return (
-            "参考@视频1、@图片1、@图片2和@图片3完成随心换。@图片1是用户最终选定的唯一人物身份、"
+            "参考@视频1、@图片1、@图片2和@图片3完成随心换。@图片1是火山角色库中已审核授权的 Active 人物 Asset，"
+            "也是用户最终选定的唯一人物身份、"
             "面部、发型和体型依据；@图片2是用户最终选定的唯一服装、鞋履和明确配饰依据；@图片3是用户最终"
-            "选定的唯一场景、空间结构、材质和环境光照依据。三张参考图均可能来自原片自动提取，也可能来自"
-            "用户上传的替换图，必须分别独立服从，不得沿用未被选中的旧人物、旧服装或旧场景。" + shared
+            "选定的唯一场景、空间结构、材质和环境光照依据。人物不得从本地真人原图或原片提取图直接读取；"
+            "人物原图只允许用于角色库审核入库。服装和场景可以来自原片自动提取，也可以来自用户上传的替换图；"
+            "三项必须分别独立服从，不得沿用未被选中的旧人物、旧服装或旧场景。" + shared
         )
     raise WorkflowError("衣装智换模式无效。")
 
@@ -569,6 +608,7 @@ class WebJob:
     scene_path: Path | None = None
     person_path: Path | None = None
     clothing_path: Path | None = None
+    replacement_path: Path | None = None
     mosaic_path: Path | None = None
     white_model_path: Path | None = None
     white_reference_path: Path | None = None
@@ -646,6 +686,13 @@ class WebJob:
                 "error_category": classify_error_message(self.error) if self.error else None,
                 "created_at": self.created_at,
                 "source_duration": round(self.source_duration, 3) if self.source_duration else 0,
+                "wardrobe_dynamic": dict(self.cast_continuity.get("wardrobe_dynamic") or {}),
+                "wardrobe_mosaic": dict(self.cast_continuity.get("wardrobe_mosaic") or {}),
+                "inline_cast": inline_cast.public(self),
+                "inline_color_plan": self.cast_continuity.get("inline_color_plan", []),
+                "wardrobe_segments": wardrobe_segments.public(sys.modules[__name__], self),
+                "source_url": f"/api/jobs/{self.id}/file/source" if self.project == WARDROBE_SWAP_PROJECT else "",
+                "white_model_revision": str(self.white_model_path.stat().st_mtime_ns) if self.white_model_path and self.white_model_path.is_file() else "",
                 "depth_duration": round(self.depth_duration, 3) if self.depth_duration else 0,
                 "generation_duration": self.generation_duration,
                 "generation_strategy": self.generation_strategy,
@@ -662,6 +709,7 @@ class WebJob:
                     else bool(self.person_path and self.person_path.is_file())
                 ),
                 "has_clothing_reference": bool(self.clothing_path and self.clothing_path.is_file()),
+                "replacement_url": f"/api/jobs/{self.id}/file/replacement" if self.replacement_path and self.replacement_path.is_file() else "",
                 "has_mosaic": bool(self.mosaic_path and self.mosaic_path.is_file()),
                 "has_white_model": bool(self.white_model_path and self.white_model_path.is_file()),
                 "has_white_reference": bool(self.white_reference_path and self.white_reference_path.is_file()),
@@ -812,6 +860,11 @@ class WebJob:
                         "dialogue_timing_path",
                     }
                 }
+                if self.project == REAL_PERSON_LONG_PROJECT:
+                    public_shot["white_model_total_generation_count"] = (
+                        real_long_white_model_paid_generation_count(shot)
+                    )
+                    public_shot["white_model_attempt_count"] = real_long_white_model_attempt_count(shot)
                 if public_shot.get("error") and not public_shot.get("error_category"):
                     public_shot["error_category"] = classify_error_message(public_shot["error"])
                 for artifact in (
@@ -949,6 +1002,43 @@ def seedance_hold_timing_prompt(
     )
 
 
+def seedance_black_timing_prompt(source_duration: float, generation_duration: float = 5.0) -> str:
+    return (f"时间轴优先规则：@视频1的0–{source_duration:.3f}秒是有效原片，按原速度完成动作、运镜与声音；"
+            f"{source_duration:.3f}–{generation_duration:.3f}秒为纯黑静音补时区间，保持黑场，不生成任何人物、动作、文字或声音；"
+            "禁止慢放、拉伸或把有效内容延后到黑场。")
+
+
+def prepare_wardrobe_final_timing(job, depth_path, depth_reference, options):
+    if not job.kind.startswith('wardrobe_generate_') or options.get('model') != DEFAULT_SEEDANCE_25_MODEL or depth_reference or depth_path is None:
+        return depth_path, options
+    info = inspect_video(depth_path)
+    if info.duration >= 5 - 1e-6:
+        return depth_path, options
+    padded = pad_video_with_trailing_black(depth_path, job.run_dir/'reference_black_5s.mp4', minimum_duration=5, with_audio=True)
+    options = {**options, 'prompt':options['prompt']+'\n'+seedance_black_timing_prompt(info.duration)}
+    job.cast_continuity['wardrobe_timing'] = dict(source_duration=info.duration, reference_duration=5)
+    job.depth_path = padded
+    job.source_duration = info.duration
+    job.log(f'当前段 {info.duration:.3f} 秒，末尾补黑场到 5 秒；成片下载后仅保留原片时长，不改变速度。')
+    return padded, options
+
+
+def finish_wardrobe_final_timing(job, output):
+    timing = job.cast_continuity.get('wardrobe_timing')
+    if not timing:
+        path = job.run_dir/'job.json'
+        if path.is_file():
+            timing = json.loads(path.read_text(encoding='utf-8')).get('wardrobe_timing')
+    if not timing or not job.kind.startswith('wardrobe_generate_'):
+        return output
+    duration = float(timing['source_duration'])
+    if inspect_video(output).duration < duration - .08:
+        raise WorkflowError('生成视频短于原片有效时长，请先核对云端结果。')
+    result = conform_video_duration(output, output.with_name(output.stem+'_original_duration.mp4'), duration, with_audio=video_has_audio(output))
+    job.log(f'已去掉补时尾部，恢复本段原片时长 {duration:.3f} 秒。')
+    return result
+
+
 def resolved_seedance_ratio(requested_ratio: str, video_path: Path | None) -> str:
     """Resolve adaptive ratio to the closest ratio Ark reports in task metadata."""
     requested = requested_ratio.strip() or "adaptive"
@@ -1073,6 +1163,8 @@ def new_job(kind: str) -> WebJob:
 
 
 def project_for_kind(kind: str) -> str:
+    if kind.startswith("motion_"):
+        return "character_motion_transfer"
     if kind.startswith("wardrobe"):
         return WARDROBE_SWAP_PROJECT
     if kind.startswith("multi"):
@@ -1419,6 +1511,8 @@ def persist_cloud_job(job: WebJob, *, status: str, **values: Any) -> Path:
             "output": str(job.output_path) if job.output_path else "",
             "duration": job.generation_duration,
             "recovery_action": job.recovery_action,
+            "wardrobe_timing": job.cast_continuity.get('wardrobe_timing') or record.get("wardrobe_timing", {}),
+            "wardrobe_audio": job.cast_continuity.get('wardrobe_audio') or record.get("wardrobe_audio", {}),
         }
     )
     record.update(values)
@@ -1524,6 +1618,9 @@ def resume_cloud_job(job: WebJob) -> None:
                 f"成片下载连接中断，正在从断点自动重试 {attempt}/{total}：{error}"
             ),
         )
+        output = finish_wardrobe_final_timing(job, output)
+        output = wardrobe_audio.finish(sys.modules[__name__], job, output)
+        output = clean_wardrobe_generated_subtitles(job, output)
         job.output_path = output
         job.update(status="succeeded", stage="Seedance 成片已自动恢复并下载", progress=100, error="")
         job.log(f"成片已下载：{output.name}")
@@ -3020,6 +3117,47 @@ def long_white_model_generation_count(shot: dict[str, Any]) -> int:
     return automatic_retry_count + 1
 
 
+def real_long_white_model_paid_generation_count(shot: dict[str, Any]) -> int:
+    """Count actual Ark task IDs for real-person white-model billing decisions."""
+
+    source_value = str(shot.get("source_path") or "").strip()
+    if source_value:
+        task_root = Path(source_value).parent / "white_model_task"
+        record_paths = list(task_root.glob("attempt_*/job.json")) if task_root.is_dir() else []
+        if record_paths:
+            task_ids: set[str] = set()
+            for record_path in record_paths:
+                try:
+                    payload = json.loads(record_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError):
+                    continue
+                task_id = str(payload.get("task_id") or "").strip() if isinstance(payload, dict) else ""
+                if task_id:
+                    task_ids.add(task_id)
+            return len(task_ids)
+    return long_white_model_generation_count(shot)
+
+
+def real_long_white_model_attempt_count(shot: dict[str, Any]) -> int:
+    """Return the local attempt sequence without confusing it with paid tasks."""
+
+    try:
+        stored = max(0, int(shot.get("white_model_attempt_count") or 0))
+    except (TypeError, ValueError):
+        stored = 0
+    source_value = str(shot.get("source_path") or "").strip()
+    if not source_value:
+        return stored
+    task_root = Path(source_value).parent / "white_model_task"
+    recorded = 0
+    if task_root.is_dir():
+        for directory in task_root.glob("attempt_*"):
+            match = re.fullmatch(r"attempt_(\d+)", directory.name)
+            if match:
+                recorded = max(recorded, int(match.group(1)))
+    return max(stored, recorded)
+
+
 def parse_long_white_model_regeneration_request(job: WebJob) -> tuple[str, set[int]]:
     mode = request.form.get("white_regeneration_mode", "normal").strip().lower() or "normal"
     if mode not in {"normal", "selected"}:
@@ -3049,7 +3187,15 @@ def parse_long_white_model_regeneration_request(job: WebJob) -> tuple[str, set[i
         missing_outputs = [
             int(shot.get("index") or 0)
             for shot in job.shots
-            if not Path(str(shot.get("white_model_path") or "")).is_file()
+            if (
+                not is_real_person_long_job(job)
+                or int(shot.get("index") or 0) not in force_indices
+            )
+            and not (
+                is_real_person_long_job(job)
+                and real_long_shot_is_skipped(shot)
+            )
+            and not Path(str(shot.get("white_model_path") or "")).is_file()
         ]
         if missing_outputs:
             raise WorkflowError(
@@ -3330,7 +3476,7 @@ class ArkCharacterUploadSource:
 
 @dataclass
 class SeedanceVideoReferenceSource:
-    """Task-scoped stable reference video source used by 衣装智换."""
+    """Task-scoped stable reference video source used by selected workflows."""
 
     url: str
     channel: str
@@ -3366,16 +3512,31 @@ def prepare_seedance_stable_video_reference(
     source: Path,
     *,
     on_log: Any | None = None,
+    context_label: str = "衣装智换",
+    verify_tos_public: bool = False,
 ) -> SeedanceVideoReferenceSource:
-    """Prefer configured TOS; otherwise expose the MP4 through the project tunnel."""
+    """Use TOS, then the project tunnel, then tempfile.org as a final fallback."""
 
     tos_error = ""
     if TosMediaStore.configured():
+        tos: TosMediaStore | None = None
+        uploaded: Any | None = None
         try:
             tos = TosMediaStore()
             uploaded = tos.upload_video(source)
+            if verify_tos_public:
+                # Ark must be able to read the signed URL before any paid task is
+                # created.  Reuse the same strict HEAD validation as the final
+                # fallback channel, including content type and file length.
+                TempFileMediaStore()._verify_public_video(
+                    uploaded.signed_url,
+                    expected_size=source.stat().st_size,
+                )
             if on_log:
-                on_log("参考视频已上传私有 TOS，正在准备 Seedance 任务。")
+                if verify_tos_public:
+                    on_log(f"{context_label}参考视频已上传私有 TOS，公网可访问性验证通过。")
+                else:
+                    on_log("参考视频已上传私有 TOS，正在准备 Seedance 任务。")
             return SeedanceVideoReferenceSource(
                 url=uploaded.signed_url,
                 channel="tos",
@@ -3384,8 +3545,31 @@ def prepare_seedance_stable_video_reference(
             )
         except Exception as exc:
             tos_error = str(exc)
+            if tos is not None and uploaded is not None:
+                try:
+                    tos.delete(uploaded.object_key)
+                except Exception:
+                    pass
             if on_log:
                 on_log(f"TOS 暂时不可用，自动切换项目一次性加密视频通道：{exc}")
+    elif verify_tos_public:
+        missing_tos = [
+            key
+            for key in ("TOS_ACCESS_KEY", "TOS_SECRET_KEY", "TOS_BUCKET")
+            if not os.getenv(key, "").strip()
+        ]
+        tos_error = "缺少 " + "、".join(missing_tos or ["TOS 配置"])
+        if on_log:
+            if "TOS_BUCKET" in missing_tos:
+                on_log(
+                    "TOS 第一上传通道不可用：TOS_BUCKET 未配置；"
+                    "正在使用第二通道——项目一次性加密视频地址。"
+                )
+            else:
+                on_log(
+                    f"TOS 第一上传通道配置不完整（{'、'.join(missing_tos)}）；"
+                    "正在使用第二通道——项目一次性加密视频地址。"
+                )
     elif on_log:
         on_log("TOS 配置不完整，衣装智换将使用项目一次性加密视频通道。")
 
@@ -3397,7 +3581,12 @@ def prepare_seedance_stable_video_reference(
         public_origin = tunnel.start()
         public_url = f"{public_origin}{video_server.route_path}"
         tunnel.wait_until_reachable(public_url)
-        if on_log:
+        if on_log and verify_tos_public:
+            on_log(
+                f"{context_label}项目一次性加密视频地址已通过公网验证；"
+                "付费任务现在才允许提交，不会使用 tempfile.org。"
+            )
+        elif on_log:
             on_log("项目一次性加密视频地址已就绪；不会使用 tempfile.org。")
         return SeedanceVideoReferenceSource(
             url=public_url,
@@ -3410,13 +3599,22 @@ def prepare_seedance_stable_video_reference(
             tunnel.close()
         video_server.close()
         tunnel_error = str(exc)
-        if on_log:
+        if on_log and verify_tos_public:
+            on_log(
+                f"项目一次性加密视频通道不可用，正在切换最后备用通道 tempfile.org：{exc}"
+            )
+        elif on_log:
             on_log(f"项目一次性加密视频通道不可用，正在切换限时临时MP4直链：{exc}")
 
     temporary_store = TempFileMediaStore()
     try:
         uploaded = temporary_store.upload_video(source, expires_hours=1)
-        if on_log:
+        if on_log and verify_tos_public:
+            on_log(
+                f"{context_label}的 tempfile.org 限时MP4直链已通过公网验证；"
+                "付费任务现在才允许提交，任务结束后将自动删除。"
+            )
+        elif on_log:
             on_log("限时临时MP4直链已生成并通过公网检查；将在任务结束后删除。")
         return SeedanceVideoReferenceSource(
             url=uploaded.signed_url,
@@ -3426,9 +3624,13 @@ def prepare_seedance_stable_video_reference(
         )
     except Exception as temporary_exc:
         detail = f"；TOS 原因：{tos_error}" if tos_error else "；TOS 未配置或服务未开通"
+        prefix = (
+            f"{context_label}三条视频通道均不可用，付费任务尚未提交、未计费，可以安全重试："
+            if verify_tos_public
+            else "衣装智换三条视频通道均不可用，付费任务尚未提交："
+        )
         raise WorkflowError(
-            "衣装智换三条视频通道均不可用，付费任务尚未提交："
-            f"项目通道：{tunnel_error}；临时MP4通道：{temporary_exc}{detail}"
+            f"{prefix}项目通道：{tunnel_error}；临时MP4通道：{temporary_exc}{detail}"
         ) from temporary_exc
 
 
@@ -4484,10 +4686,25 @@ def sanitize_video_visible_text_if_needed(
     )
 
 
+def clean_wardrobe_generated_subtitles(job: WebJob, output: Path) -> Path:
+    """Clean only wardrobe final exports; keep the downloaded source and its audio."""
+    if not job.kind.startswith("wardrobe_generate_"):
+        return output
+    job.update(stage="正在本地检查并清除成片叠加字幕", progress=96)
+    cleaned, profile = sanitize_video_visible_text_if_needed(
+        output, output.with_name(output.stem + "_no_subtitles.mp4"),
+        preserve_audio=True, overlay_only=True,
+    )
+    if profile.get("changed"):
+        job.log("已在本地清除检测到的成片叠加字幕，保留原下载文件及生成音频。")
+    return cleaned
+
+
 def _sample_white_model_profile(
     video_path: Path,
     *,
     positions: tuple[float, ...] = (0.12, 0.32, 0.52, 0.72, 0.88),
+    cast_colors: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
@@ -4512,9 +4729,18 @@ def _sample_white_model_profile(
                 colored = subject_saturation >= 105
                 neutral_bright_ratio = float(np.count_nonzero(neutral_bright)) / subject_count
                 colored_ratio = float(np.count_nonzero(colored)) / subject_count
+                allowed = np.zeros(hsv.shape[:2], dtype=bool)
+                hue, sat, val = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+                for cast_color in cast_colors:
+                    if cast_color == 'white': allowed |= (sat <= 68) & (val >= 72)
+                    if cast_color == 'red': allowed |= ((hue <= 10) | (hue >= 165)) & (sat >= 105) & (val >= 50)
+                    if cast_color == 'blue': allowed |= (hue >= 100) & (hue <= 135) & (sat >= 105) & (val >= 50)
+                    if cast_color == 'yellow': allowed |= (hue >= 20) & (hue < 35) & (sat >= 105) & (val >= 70)
+                cast_material_ratio = float(np.count_nonzero(allowed & subject)) / subject_count
             else:
                 neutral_bright_ratio = 0.0
                 colored_ratio = 0.0
+                cast_material_ratio = 0.0
             frames.append(
                 {
                     "position": float(position),
@@ -4522,6 +4748,7 @@ def _sample_white_model_profile(
                     "subject_ratio": round(1.0 - green_ratio, 4),
                     "neutral_bright_ratio": round(neutral_bright_ratio, 4),
                     "colored_subject_ratio": round(colored_ratio, 4),
+                    "cast_material_ratio": round(cast_material_ratio, 4),
                 }
             )
     finally:
@@ -4533,6 +4760,7 @@ def _sample_white_model_profile(
         "median_subject_ratio": median("subject_ratio"),
         "median_neutral_bright_ratio": median("neutral_bright_ratio"),
         "median_colored_subject_ratio": median("colored_subject_ratio"),
+        "median_cast_material_ratio": median("cast_material_ratio"),
     }
 
 
@@ -4869,6 +5097,7 @@ def validate_white_model(
     white_model_path: Path,
     *,
     expected_actor_count: int,
+    cast_colors: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Gate the white-model artifact before it can become a paid final reference."""
     reasons: list[str] = []
@@ -4881,7 +5110,7 @@ def validate_white_model(
     white_motion = _sample_motion_profile(white_model_path)
     source_vector = _sample_global_motion_vector(source_path)
     white_vector = _sample_global_motion_vector(white_model_path)
-    visual = _sample_white_model_profile(white_model_path)
+    visual = _sample_white_model_profile(white_model_path, cast_colors=cast_colors) if cast_colors else _sample_white_model_profile(white_model_path)
     text = _sample_text_profile(white_model_path)
     source_dimensions = ""
     white_dimensions = ""
@@ -4905,11 +5134,15 @@ def validate_white_model(
         reasons.append("白模背景没有形成稳定标准绿幕")
     if not 0.01 <= float(visual.get("median_subject_ratio") or 0.0) <= 0.9:
         reasons.append("白模人体占位异常，可能为空镜或几乎覆盖整个画面")
-    if float(visual.get("median_neutral_bright_ratio") or 0.0) < 0.5:
+    if cast_colors:
+        if float(visual.get("median_cast_material_ratio") or 0.0) < 0.60:
+            reasons.append("人物分色材质比例不足，请检查是否残留皮肤、服装或使用了错误颜色")
+        warnings.append("分色母版需逐人预览确认，颜色比例检查不能判断人物身份是否对应正确")
+    elif float(visual.get("median_neutral_bright_ratio") or 0.0) < 0.5:
         reasons.append("白模人体不是稳定的中性白色材质，疑似保留头发、服装或原人物颜色")
     elif float(visual.get("median_neutral_bright_ratio") or 0.0) < 0.68:
         warnings.append("白模中性白色材质比例偏低，建议人工检查是否残留服装或头发")
-    if float(visual.get("median_colored_subject_ratio") or 0.0) > 0.2:
+    if not cast_colors and float(visual.get("median_colored_subject_ratio") or 0.0) > 0.2:
         reasons.append("白模人体区域仍有大面积彩色内容，疑似服装或皮肤残留")
     if bool(text.get("detected")):
         reasons.append("白模多帧检测到疑似字幕、时间码、Logo或文字")
@@ -5197,6 +5430,9 @@ def build_long_shot_prompt(
         prompt_actors.append((local_index, role, source_slot, position_anchor))
         continuity_label = f"、原片稳定身份C{source_character_id}" if source_character_id else ""
         source_role = f"表演槽位P{source_slot}{continuity_label}「{role}」"
+        if actor.get("model_color"):
+            from cast_colors import COLOR_NAMES
+            source_role += f"（{COLOR_NAMES[actor['model_color']]}模）"
         first_image = (local_index - 1) * images_per_actor + 1
         if real_person_mode:
             clauses.append(
@@ -5412,6 +5648,10 @@ def _whole_video_identity_map(
                 mapping.get("source_position") or long_shot_performance_slot_anchor(shot, slot)
             )
             anchor_text = f"[{anchor}]" if anchor else ""
+            from cast_colors import COLOR_NAMES
+            model_color = next((r['color'] for r in shot.get('white_color_plan',[]) if r['id'] == f'p{slot}'), '')
+            if model_color:
+                anchor_text += f"[{COLOR_NAMES[model_color]}模]"
             slot_clauses.append(
                 f"P{slot}{anchor_text}=人物{actor_id}@图片{image_index}"
             )
@@ -5764,29 +6004,21 @@ def run_clothing_reference_extraction(
     return output
 
 
-def normalize_wardrobe_source_duration(job: WebJob, source: Path) -> Path:
-    """Keep wardrobe-swap source material within the 15-second product limit."""
+def normalize_wardrobe_source_duration(
+    job: WebJob,
+    source: Path,
+    *,
+    max_seconds: float = WARDROBE_MAX_SOURCE_SECONDS,
+    project_label: str = "衣装智换",
+) -> Path:
+    """Preserve the upload and expose every <=15-second segment for production."""
     info = inspect_video(source)
-    if info.duration <= WARDROBE_MAX_SOURCE_SECONDS + 1e-6:
-        job.log(f"原片时长 {info.duration:.2f} 秒，无需裁剪。")
+    job.source_duration = info.duration
+    if info.duration <= max_seconds + 1e-6:
+        job.log(f"原片时长 {info.duration:.3f} 秒；不足 5 秒时在提交视频末尾补黑场，成片恢复原时长。")
         return source
-    job.update(stage="原片超过 15 秒，正在自动截取前 15 秒", progress=1)
-    clipped = conform_video_duration(
-        source,
-        job.run_dir / "reference_first_15s.mp4",
-        WARDROBE_MAX_SOURCE_SECONDS,
-        with_audio=False,
-    )
-    clipped_info = inspect_video(clipped)
-    if clipped_info.duration > WARDROBE_MAX_SOURCE_SECONDS + 0.08:
-        raise WorkflowError(
-            f"原片自动裁剪后仍超过 15 秒，当前 {clipped_info.duration:.2f} 秒。"
-        )
-    job.log(
-        f"原片时长 {info.duration:.2f} 秒，已自动截取前 {clipped_info.duration:.2f} 秒；"
-        "后续打码、白膜、素材提取和成片均只使用该片段。"
-    )
-    return clipped
+    return wardrobe_segments.prepare(sys.modules[__name__], job, source, info.duration, max_seconds)
+
 
 
 def conform_wardrobe_seedance_reference_image(
@@ -5928,15 +6160,26 @@ def prepare_wardrobe_seedance_reference(
     return path
 
 
-def build_wardrobe_white_model_options(source: Path, source_duration: float) -> dict[str, Any]:
+def build_wardrobe_white_model_options(
+    source: Path,
+    source_duration: float,
+    *,
+    prompt_override: str = "",
+) -> dict[str, Any]:
     """Build Seedance 2.0 / 480p controls with a wardrobe-only safe mannequin prompt."""
     ratio = resolved_seedance_ratio("adaptive", source)
     if not ratio:
         raise WorkflowError("无法识别原片画面比例，不能提交 Seedance 2.0 白膜任务。")
-    generation_duration = match_seedance_cover_duration(source_duration)
-    prompt = WARDROBE_SAFE_WHITE_MODEL_PROMPT
+    generation_duration = max(5, match_seedance_cover_duration(source_duration))
+    prompt = prompt_override.strip() or WARDROBE_SAFE_WHITE_MODEL_PROMPT
+    if BARE_PROXY_BODY not in prompt:
+        prompt = BARE_PROXY_BODY + prompt
+    if REMOVE_OVERLAY_TEXT not in prompt:
+        prompt += REMOVE_OVERLAY_TEXT
+    if PROXY_DIALOGUE not in prompt:
+        prompt += PROXY_DIALOGUE
     if source_duration < generation_duration - 0.02:
-        prompt = f"{prompt}\n{seedance_hold_timing_prompt(source_duration, generation_duration)}"
+        prompt = f"{prompt}\n{seedance_black_timing_prompt(source_duration, generation_duration)}"
     return {
         "generation_channel": "api",
         "prompt": prompt,
@@ -5944,19 +6187,30 @@ def build_wardrobe_white_model_options(source: Path, source_duration: float) -> 
         "resolution": "480p",
         "ratio": ratio,
         "duration": generation_duration,
-        "generate_audio": False,
+        "generate_audio": video_has_audio(source),
         "watermark": False,
         "delete_tos_after": True,
         "reference_upload_strategy": "stable",
     }
 
 
-def run_wardrobe_face_mosaic(job: WebJob, source: Path, *, start: int = 0, span: int = 100) -> Path:
-    """Create only the local face-masked clip used by 衣装智换."""
+def run_wardrobe_face_mosaic(
+    job: WebJob,
+    source: Path,
+    *,
+    start: int = 0,
+    span: int = 100,
+    score_threshold: float = 0.72,
+    max_source_seconds: float = WARDROBE_MAX_SOURCE_SECONDS,
+    project_label: str = "衣装智换",
+) -> Path:
+    """Create a local face-masked clip for a short-form workflow."""
     info = inspect_video(source)
-    if info.duration > WARDROBE_MAX_SOURCE_SECONDS + 0.08:
-        raise WorkflowError("衣装智换素材必须先自动裁剪到 15 秒以内。")
+    if info.duration > max_source_seconds + 0.08:
+        raise WorkflowError(f"{project_label}素材必须先自动裁剪到 {max_source_seconds:g} 秒以内。")
     mosaic = job.run_dir / "face_mosaic.mp4"
+    job.cast_continuity["wardrobe_mosaic"] = {"face_score_threshold": score_threshold}
+    job.log(f"本次人脸检测阈值：{score_threshold:.2f}（数值越低，检测越灵敏）。")
     job.update(status="running", stage="正在检测并跟踪原片全部人脸", progress=start)
 
     def on_mosaic_progress(current: int, total: int, maximum_faces: int) -> None:
@@ -5969,9 +6223,10 @@ def run_wardrobe_face_mosaic(job: WebJob, source: Path, *, start: int = 0, span:
         source,
         mosaic,
         block_size=22,
-        score_threshold=0.72,
+        score_threshold=score_threshold,
         on_progress=on_mosaic_progress,
         on_log=job.log,
+        **({"detect_rotated_faces": True} if job.kind in {"wardrobe_prepare_dynamic", "wardrobe_prepare_dynamic_object", "wardrobe_prepare_dynamic_scene", "wardrobe_continuation_prepare"} else {}),
     )
     job.mosaic_path = mosaic
     job.log(
@@ -5981,7 +6236,20 @@ def run_wardrobe_face_mosaic(job: WebJob, source: Path, *, start: int = 0, span:
     return mosaic
 
 
-def run_wardrobe_white_model(job: WebJob, source: Path, *, start: int = 0, span: int = 70) -> Path:
+def run_wardrobe_white_model(
+    job: WebJob,
+    source: Path,
+    *,
+    start: int = 0,
+    span: int = 70,
+    prompt_override: str = "",
+    child_project: str = WARDROBE_SWAP_PROJECT,
+    child_kind: str = "wardrobe_white_model",
+    max_source_seconds: float = WARDROBE_MAX_SOURCE_SECONDS,
+    project_label: str = "衣装智换",
+    reference_source_factory: Callable[..., SeedanceVideoReferenceSource] | None = None,
+    preserve_scene: bool = False,
+) -> Path:
     """Use an existing face-masked clip to create the white-model master.
 
     The legacy combined endpoint may still call this without a mosaic. In that
@@ -5990,49 +6258,60 @@ def run_wardrobe_white_model(job: WebJob, source: Path, *, start: int = 0, span:
     white model before the user has previewed the mosaic.
     """
     info = inspect_video(source)
-    if info.duration > WARDROBE_MAX_SOURCE_SECONDS + 0.08:
-        raise WorkflowError("衣装智换素材必须先自动裁剪到 15 秒以内。")
+    if info.duration > max_source_seconds + 0.08:
+        raise WorkflowError(f"{project_label}素材必须先自动裁剪到 {max_source_seconds:g} 秒以内。")
     mosaic = job.mosaic_path if job.mosaic_path and job.mosaic_path.is_file() else None
     if mosaic is None:
         mosaic_span = max(1, int(span * 0.25))
-        mosaic = run_wardrobe_face_mosaic(job, source, start=start, span=mosaic_span)
+        mosaic = run_wardrobe_face_mosaic(
+            job,
+            source,
+            start=start,
+            span=mosaic_span,
+            max_source_seconds=max_source_seconds,
+            project_label=project_label,
+        )
     else:
-        job.log("已复用人工可预览的人脸打码视频，不会重复执行本地打码。")
+        job.log("已复用人工可预览的原片母版。" if job.kind in {f"wardrobe_prepare_{mode}" for mode in DYNAMIC_ENVIRONMENT_MODES} else "已复用人工可预览的人脸打码视频，不会重复执行本地打码。")
     clean_mosaic, text_cleanup = sanitize_video_visible_text_if_needed(
         mosaic,
         job.run_dir / "face_mosaic_no_overlay_text.mp4",
-        preserve_audio=False,
+        preserve_audio=True,
         overlay_only=True,
     )
     if text_cleanup.get("changed"):
         job.log("已在本地清除打码视频中的字幕和叠加文字后再生成白膜；场景内自然文字不受影响。")
-    silent_reference = strip_video_audio(clean_mosaic, job.run_dir / "face_mosaic_silent.mp4")
-    white_reference = silent_reference
-    generation_duration = match_seedance_cover_duration(info.duration)
-    if inspect_video(silent_reference).duration < generation_duration - 0.02:
-        white_reference = extend_video_with_trailing_hold(
-            silent_reference,
-            job.run_dir / "face_mosaic_seedance_timed.mp4",
-            target_duration=float(generation_duration),
-            with_audio=False,
+    audio_reference = wardrobe_audio.attach(clean_mosaic, source, job.run_dir / "face_mosaic_original_audio.mp4")
+    white_reference = audio_reference
+    generation_duration = max(5, match_seedance_cover_duration(info.duration))
+    if inspect_video(audio_reference).duration < generation_duration - 0.02:
+        white_reference = pad_video_with_trailing_black(
+            audio_reference, job.run_dir / "face_mosaic_seedance_black.mp4",
+            minimum_duration=float(generation_duration), with_audio=True,
         )
         job.log(
-            f"原片动作保持 {info.duration:.2f} 秒不变，仅将结束姿势定格补足到 "
+            f"原片动作保持 {info.duration:.2f} 秒不变，仅在末尾追加黑场补足到 "
             f"{generation_duration} 秒供 Seedance 2.0 生成。"
         )
 
-    white_dir = job.run_dir / "white_model_task"
+    white_dir = wardrobe_white_task_dir(job)
     white_dir.mkdir(parents=True, exist_ok=True)
     white_job = WebJob(
         id=f"{job.id}-white",
-        kind="wardrobe_white_model",
-        project=WARDROBE_SWAP_PROJECT,
+        kind=child_kind,
+        project=child_project,
         run_dir=white_dir,
         depth_path=white_reference,
     )
     with JOBS_LOCK:
         JOBS[white_job.id] = white_job
-    white_options = build_wardrobe_white_model_options(source, info.duration)
+    white_options = build_wardrobe_white_model_options(
+        source,
+        info.duration,
+        prompt_override=prompt_override,
+    )
+    if reference_source_factory is not None:
+        white_options["reference_upload_context"] = project_label
     job.update(stage="Seedance 2.0 · 480p 正在生成白膜动作母版", progress=start + max(1, int(span * 0.08)))
     run_generation(
         white_job,
@@ -6044,23 +6323,31 @@ def run_wardrobe_white_model(job: WebJob, source: Path, *, start: int = 0, span:
         options=white_options,
         progress_start=5,
         video_only=True,
+        reference_source_factory=reference_source_factory,
     )
     if white_job.status != "succeeded" or not white_job.output_path or not white_job.output_path.is_file():
         raise WorkflowError(white_job.error or "白膜视频生成未完成。")
     white_output = conform_video_duration(
         white_job.output_path,
-        job.run_dir / "white_model.mp4",
+        wardrobe_white_output_path(job),
         info.duration,
         with_audio=False,
     )
+    white_output, _ = sanitize_video_visible_text_if_needed(
+        white_output, white_output.with_name("white_model_no_subtitles.mp4"),
+        preserve_audio=False, overlay_only=True,
+    )
+    white_output = wardrobe_audio.attach(white_output, source, white_output.with_name("white_model_original_audio.mp4"))
     job.white_model_path = white_output
+    if "inline_pending_color_plan" in job.cast_continuity:
+        job.cast_continuity["inline_color_plan"] = job.cast_continuity["inline_pending_color_plan"]
     job.update(
         source_duration=info.duration,
         depth_duration=inspect_video(white_output).duration,
         generation_duration=generation_duration,
         progress=start + span,
     )
-    job.log("白膜视频已校正回原片时长，可作为最终成片的动作、构图和运镜母版。")
+    job.log("白膜已恢复原片时长和原片声音，可作为成片的动作、对白、构图和运镜母版；请预览确认说话节奏。")
     return white_output
 
 
@@ -6328,6 +6615,8 @@ def run_generation(
     options: dict[str, Any],
     progress_start: int = 0,
     video_only: bool = False,
+    reference_images: list[str] | None = None,
+    reference_source_factory: Callable[..., SeedanceVideoReferenceSource] | None = None,
     on_finished: Callable[[WebJob], None] | None = None,
 ) -> None:
     uploaded_key = ""
@@ -6336,6 +6625,8 @@ def run_generation(
     free_store: TempFileMediaStore | None = None
     stable_reference: SeedanceVideoReferenceSource | None = None
     try:
+        depth_path, options = wardrobe_audio.prepare(sys.modules[__name__], job, depth_path, depth_reference, options)
+        depth_path, options = prepare_wardrobe_final_timing(job, depth_path, depth_reference, options)
         client = api_client()
         job.update(stage="正在检查火山方舟 API 连接", progress=max(progress_start, 48))
         job.log("正在进行只读 API 连接预检；临时网络错误会安全重试。")
@@ -6346,11 +6637,18 @@ def run_generation(
             if depth_path is None:
                 raise WorkflowError("缺少深度视频文件或公网 URL。")
             info = validate_seedance_reference_video(depth_path)
-            if options.get("reference_upload_strategy") == "stable":
-                job.update(stage="正在建立衣装智换稳定视频通道", progress=max(progress_start, 52))
+            if reference_source_factory is not None:
+                job.update(stage="正在准备并验证参考视频传输副本", progress=max(progress_start, 52))
+                stable_reference = reference_source_factory(depth_path, on_log=job.log)
+                depth_reference = stable_reference.url
+            elif options.get("reference_upload_strategy") == "stable":
+                upload_context = str(options.get("reference_upload_context") or "衣装智换").strip()
+                job.update(stage=f"正在建立{upload_context}稳定视频通道", progress=max(progress_start, 52))
                 stable_reference = prepare_seedance_stable_video_reference(
                     depth_path,
                     on_log=job.log,
+                    context_label=upload_context,
+                    verify_tos_public=bool(options.get("verify_tos_public")),
                 )
                 depth_reference = stable_reference.url
             else:
@@ -6387,7 +6685,15 @@ def run_generation(
                         store = None
                         raise WorkflowError(f"免费临时服务和 TOS 均不可用：{exc}") from exc
 
-        if video_only:
+        if reference_images is not None:
+            payload = build_motion_reference_payload(
+                prompt=options["prompt"], image_sources=reference_images,
+                video_reference=depth_reference, model=options["model"],
+                resolution=options["resolution"], ratio=options["ratio"],
+                duration=options["duration"], generate_audio=options["generate_audio"],
+                watermark=options["watermark"],
+            )
+        elif video_only:
             payload = build_video_reference_seedance_payload(
                 prompt=options["prompt"],
                 video_reference=depth_reference,
@@ -6560,6 +6866,9 @@ def run_generation(
                 f"Seedance 成片下载连接中断，正在从断点自动重试 {attempt}/{total}：{error}"
             ),
         )
+        output = finish_wardrobe_final_timing(job, output)
+        output = wardrobe_audio.finish(sys.modules[__name__], job, output)
+        output = clean_wardrobe_generated_subtitles(job, output)
         job.output_path = output
         save_job_record(
             job.run_dir,
@@ -6583,6 +6892,8 @@ def run_generation(
                 "duration": options["duration"],
                 "prompt": options["prompt"],
                 "requested_signature": str(options.get("requested_signature") or ""),
+                "wardrobe_timing": job.cast_continuity.get("wardrobe_timing", {}),
+                "wardrobe_audio": job.cast_continuity.get("wardrobe_audio", {}),
                 "usage": task.get("usage"),
             },
         )
@@ -6609,13 +6920,14 @@ def run_generation(
     finally:
         if stable_reference is not None:
             stable_channel = stable_reference.channel
+            upload_context = str(options.get("reference_upload_context") or "衣装智换").strip()
             stable_reference.close(
                 delete_remote=bool(options.get("delete_tos_after")) and job.status != "paused"
             )
             if stable_channel == "tos":
-                job.log("衣装智换 TOS 临时视频已清理。")
+                job.log(f"{upload_context} TOS 临时视频已清理。")
             else:
-                job.log("衣装智换项目一次性加密视频通道已关闭。")
+                job.log(f"{upload_context}项目临时视频通道已关闭。")
         if free_file_id and options.get("delete_tos_after") and free_store is not None and job.status != "paused":
             try:
                 free_store.delete(free_file_id)
@@ -6927,19 +7239,19 @@ def multi_person_project():
 @app.get("/projects/person")
 @app.get("/person-only")
 def person_only_project():
-    return send_from_directory(WEB_DIR, "person.html")
+    return redirect("/projects/wardrobe#person")
 
 
 @app.get("/projects/scene")
 @app.get("/scene-only")
 def scene_only_project():
-    return send_from_directory(WEB_DIR, "scene.html")
+    return redirect("/projects/wardrobe#scene")
 
 
 @app.get("/projects/clothing")
 @app.get("/clothing-only")
 def clothing_only_project():
-    return send_from_directory(WEB_DIR, "clothing.html")
+    return redirect("/projects/wardrobe#clothing")
 
 
 @app.get("/projects/wardrobe")
@@ -7010,6 +7322,10 @@ def config():
             "scene_only_prompt": build_scene_only_prompt(),
             "clothing_only_prompt": build_clothing_only_prompt(),
             "wardrobe_swap_model": DEFAULT_SEEDANCE_25_MODEL,
+            "wardrobe_dynamic_white_prompt": DYNAMIC_WHITE_PROMPT,
+            "wardrobe_dynamic_mosaic_scope": "all_faces",
+            "wardrobe_dynamic_modes": DYNAMIC_EDIT_PROFILES,
+            "wardrobe_mosaic_threshold_supported": True,
             "wardrobe_swap_resolutions": ["480p", "720p"],
             "wardrobe_swap_prompts": {
                 mode: build_wardrobe_swap_prompt(mode) for mode in sorted(WARDROBE_SWAP_MODES)
@@ -7677,7 +7993,7 @@ def persist_wardrobe_swap_job(
     *,
     source_job_id: str = "",
 ) -> Path:
-    white_task_record = job.run_dir / "white_model_task" / "job.json"
+    white_task_record = wardrobe_white_task_dir(job) / "job.json"
     white_task_id = ""
     if white_task_record.is_file():
         try:
@@ -7702,12 +8018,19 @@ def persist_wardrobe_swap_job(
             "white_model": str(job.white_model_path or ""),
             "person": str(job.person_path or ""),
             "clothing": str(job.clothing_path or ""),
+            "replacement": str(job.replacement_path or ""),
             "scene": str(job.scene_path or ""),
             "output": str(job.output_path or ""),
             "actors": job.actors,
             "error": job.error,
             "recovery_action": job.recovery_action,
             "white_model_task_id": white_task_id,
+            "wardrobe_dynamic": dict(job.cast_continuity.get("wardrobe_dynamic") or {}),
+            "wardrobe_mosaic": dict(job.cast_continuity.get("wardrobe_mosaic") or {}),
+            "inline_cast": job.cast_continuity.get("inline_cast", []),
+            "inline_color_plan": job.cast_continuity.get("inline_color_plan", []),
+            "inline_pending_color_plan": job.cast_continuity.get("inline_pending_color_plan", []),
+            "wardrobe_segment": job.cast_continuity.get("wardrobe_segment", {}),
         },
     )
 
@@ -7756,6 +8079,9 @@ def restore_wardrobe_output_link(source_job: WebJob, mode: str) -> bool:
             output = _runs_record_file(record.get("output"))
             if output is None or not _wardrobe_record_belongs_to_source(record, source_job):
                 continue
+            if mode in DYNAMIC_EDIT_MODES and (source_job.white_model_path is None or
+                    (_runs_record_file(record.get("white_model")) or _runs_record_file(record.get("depth"))) != source_job.white_model_path):
+                continue
             created_at = str(
                 record.get("created_at")
                 or datetime.fromtimestamp(record_path.stat().st_mtime).isoformat(timespec="seconds")
@@ -7766,6 +8092,11 @@ def restore_wardrobe_output_link(source_job: WebJob, mode: str) -> bool:
     _created_at, _mtime, output = max(candidates, key=lambda item: (item[0], item[1]))
     source_job.output_path = output
     source_job.log(f"已从本地存档重新关联最终成片：{output.name}")
+    wardrobe_segments.record_result(sys.modules[__name__], source_job, output)
+    try:
+        wardrobe_segments.assemble(sys.modules[__name__], source_job)
+    except Exception as exc:
+        source_job.log(f"已恢复分段成片，完整视频可稍后重新合成：{exc}")
     return True
 
 
@@ -7788,6 +8119,11 @@ def persist_wardrobe_generation_result(
     )
     source_job.log(f"最终成片已写入项目存档：{generated_job.output_path.name}")
     persist_wardrobe_swap_job(source_job, mode)
+    wardrobe_segments.record_result(sys.modules[__name__], source_job, generated_job.output_path)
+    try:
+        wardrobe_segments.assemble(sys.modules[__name__], source_job)
+    except Exception as exc:
+        source_job.log(f"分段已保存，完整视频合成失败，可点击重新合成：{exc}")
 
 
 WARDROBE_CLOUD_ACTIVE_STATUSES = {"queued", "running", "submitted", "processing"}
@@ -7805,8 +8141,20 @@ def wardrobe_white_worker_alive(job_id: str) -> bool:
     )
 
 
+def wardrobe_white_task_dir(job: WebJob) -> Path:
+    attempt = str((job.cast_continuity.get("wardrobe_dynamic") or {}).get("white_attempt") or "")
+    suffix = f"_{attempt}" if re.fullmatch(r"[A-Za-z0-9_-]{16,80}", attempt) else ""
+    return job.run_dir / f"white_model_task{suffix}"
+
+
+def wardrobe_white_output_path(job: WebJob) -> Path:
+    if (job.cast_continuity.get("wardrobe_dynamic") or {}).get("white_attempt"):
+        return wardrobe_white_task_dir(job) / "white_model.mp4"
+    return job.run_dir / "white_model.mp4"
+
+
 def _wardrobe_white_task_record(job: WebJob) -> tuple[Path, dict[str, Any]]:
-    path = job.run_dir / "white_model_task" / "job.json"
+    path = wardrobe_white_task_dir(job) / "job.json"
     if not path.is_file():
         return path, {}
     try:
@@ -8019,7 +8367,8 @@ def restore_wardrobe_swap_job(
         white_model = _runs_record_file(record.get("white_model"))
         mosaic = _runs_record_file(record.get("mosaic"))
         source = _runs_record_file(record.get("source"))
-        if white_model is None and mosaic is None and source is None:
+        video_asset = (record.get("wardrobe_dynamic") or {}).get("video_asset", "")
+        if white_model is None and mosaic is None and source is None and not video_asset and not _runs_record_file((record.get("wardrobe_segment") or {}).get("source")):
             continue
         created_at = str(
             record.get("created_at")
@@ -8051,14 +8400,26 @@ def restore_wardrobe_swap_job(
         white_model_path=white_model,
         person_path=_runs_record_file(record.get("person")),
         clothing_path=_runs_record_file(record.get("clothing")),
+        replacement_path=_runs_record_file(record.get("replacement")),
         scene_path=_runs_record_file(record.get("scene")),
         output_path=_runs_record_file(record.get("output")),
         actors=list(record.get("actors") or []),
+        cast_continuity={
+            "wardrobe_dynamic": dict(record.get("wardrobe_dynamic") or {}),
+            **({"wardrobe_mosaic": dict(record["wardrobe_mosaic"])} if record.get("wardrobe_mosaic") else {}),
+        },
         error=str(record.get("error") or ""),
         recovery_action=str(record.get("recovery_action") or ""),
         created_at=created_at,
     )
-    if white_model:
+    for field in ('inline_cast', 'inline_color_plan', 'inline_pending_color_plan', 'wardrobe_segment'):
+        if record.get(field): restored.cast_continuity[field] = record[field]
+
+    if restored.cast_continuity["wardrobe_dynamic"].get("object_workflow") == "library":
+        restored.log("已恢复角色库原片视频，可直接设置物品替换，无需打码或生成白模。")
+    elif restored.cast_continuity["wardrobe_dynamic"].get("scene_workflow") == "library":
+        restored.log("已恢复角色库原片视频，可直接设置背景替换，无需打码或生成白模。")
+    elif white_model:
         restored.log("已从本地存档恢复白膜和已准备的参考素材，不会重复产生费用。")
     else:
         restored.log("已恢复未完成的衣装智换准备任务；若云端白膜已成功，可只恢复下载而不重新生成。")
@@ -8075,7 +8436,7 @@ def restore_wardrobe_white_model_job(parent_job: WebJob) -> WebJob | None:
         existing = JOBS.get(white_job_id)
     if existing:
         return existing
-    run_dir = parent_job.run_dir / "white_model_task"
+    run_dir = wardrobe_white_task_dir(parent_job)
     record_path = run_dir / "job.json"
     if not record_path.is_file():
         return None
@@ -8125,7 +8486,7 @@ def restore_wardrobe_white_model_job(parent_job: WebJob) -> WebJob | None:
 
 
 def wardrobe_mode_from_job(job: WebJob) -> str:
-    match = re.search(r"wardrobe_(?:prepare|generate)_([a-z]+)", job.kind)
+    match = re.fullmatch(r"wardrobe_(?:prepare|generate)_([a-z_]+)", job.kind)
     mode = match.group(1) if match else ""
     if mode not in WARDROBE_SWAP_MODES:
         raise WorkflowError("无法识别衣装智换任务模式。")
@@ -8159,6 +8520,10 @@ def latest_wardrobe_swap_job():
 
 
 def wardrobe_prepare_source(job: WebJob) -> Path:
+    segment = job.cast_continuity.get("wardrobe_segment") or {}
+    selected = _runs_record_file(segment.get("source"))
+    if selected:
+        return selected
     clipped = job.run_dir / "reference_first_15s.mp4"
     if clipped.is_file():
         return clipped
@@ -8194,6 +8559,20 @@ def create_wardrobe_swap_mosaic_job():
         mode = request.form.get("mode", "").strip().lower()
         if mode not in WARDROBE_SWAP_MODES:
             raise WorkflowError("请选择只更换人物、只更换场景、只更换服装或随心换。")
+        try:
+            score_threshold = float(request.form.get("face_score_threshold", "0.55"))
+        except ValueError as exc:
+            raise WorkflowError("人脸检测阈值必须是数字。") from exc
+        if not 0.30 <= score_threshold <= 0.90:
+            raise WorkflowError("人脸检测阈值必须在 0.30–0.90 之间。")
+        dynamic = {}
+        if mode in DYNAMIC_EDIT_MODES:
+            description = dynamic_target_description(mode, request.form.get("target_description", "")) if mode in DYNAMIC_ENVIRONMENT_MODES else ""
+            dynamic = {"mosaic_scope": "preserve_source" if mode in DYNAMIC_ENVIRONMENT_MODES else "all_faces", "description": description, "requests": {}}
+            if mode == "dynamic_object":
+                dynamic.update(workflow_version=2, object_workflow="references")
+            elif mode == "dynamic_scene":
+                dynamic.update(workflow_version=2, scene_workflow="references")
         with JOBS_LOCK:
             active_duplicate = next(
                 (
@@ -8208,16 +8587,43 @@ def create_wardrobe_swap_mosaic_job():
         if active_duplicate is not None:
             active_duplicate.log("已拦截重复点击：当前人脸打码任务仍在运行，不会创建第二份任务。")
             return jsonify(active_duplicate.public()), 202
+        reused_source = None
+        if not request.files.get("reference_video"):
+            previous, previous_mode = wardrobe_prepare_job_from_request()
+            if previous_mode != mode:
+                raise WorkflowError("只能复用当前衣装智换模式的原片。")
+            reused_source = wardrobe_prepare_source(previous)
         job = new_job(f"wardrobe_prepare_{mode}")
-        source = save_upload(request.files.get("reference_video"), job.run_dir, "reference")
+        if reused_source is not None:
+            source = job.run_dir / "reference.mp4"
+            shutil.copyfile(reused_source, source)
+            wardrobe_segments.replace_member(sys.modules[__name__], previous, job)
+            if mode in DYNAMIC_ENVIRONMENT_MODES:
+                job.replacement_path = previous.replacement_path
+        else:
+            source = save_upload(request.files.get("reference_video"), job.run_dir, "reference")
+        if dynamic:
+            job.cast_continuity["wardrobe_dynamic"] = dynamic
+        if mode not in DYNAMIC_ENVIRONMENT_MODES:
+            job.cast_continuity["wardrobe_mosaic"] = {"face_score_threshold": score_threshold}
+        persist_wardrobe_swap_job(job, mode)
 
         def worker() -> None:
             try:
                 working_source = normalize_wardrobe_source_duration(job, source)
-                run_wardrobe_face_mosaic(job, working_source, start=2, span=96)
+                if mode in DYNAMIC_ENVIRONMENT_MODES:
+                    # Keep people intact when editing objects/backgrounds; masking
+                    # their faces here would carry that irreversible edit downstream.
+                    job.mosaic_path = working_source
+                    job.update(source_duration=inspect_video(working_source).duration)
+                    job.log("原片母版已准备：保留人物与画面，将只对白模目标区域进行生成编辑。")
+                else:
+                    run_wardrobe_face_mosaic(job, working_source, start=2, span=96, score_threshold=score_threshold)
+                if mode == "dynamic":
+                    job.log("已自动检测并打码原片中出现的全部人脸，无需主角框选或定位点。白模阶段仍只转换主要人物。")
                 job.update(
                     status="succeeded",
-                    stage="人脸打码视频已生成；请人工预览后再生成白膜",
+                    stage="原片母版已准备；请预览目标区域后生成白模" if mode in DYNAMIC_ENVIRONMENT_MODES else "人脸打码视频已生成；请人工预览后再生成白膜",
                     progress=100,
                     error="",
                     recovery_action="",
@@ -8233,14 +8639,106 @@ def create_wardrobe_swap_mosaic_job():
         return jsonify({"error": str(exc)}), 400
 
 
+WARDROBE_DYNAMIC_SUBMIT_LOCK = threading.RLock()
+
+
+def serialize_wardrobe_dynamic_submit(handler):
+    @wraps(handler)
+    def wrapped(*args, **kwargs):
+        if request.form.get("request_id"):
+            with WARDROBE_DYNAMIC_SUBMIT_LOCK:
+                return handler(*args, **kwargs)
+        return handler(*args, **kwargs)
+    return wrapped
+
+
+def wardrobe_dynamic_request(job: WebJob, action: str) -> tuple[str, WebJob | None]:
+    if not form_bool("paid_confirmed"):
+        raise WorkflowError("请确认本次付费生成。")
+    key = request.form.get("request_id", "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", key):
+        raise WorkflowError("缺少有效的提交标识，请刷新页面后重试。")
+    data = job.cast_continuity.get("wardrobe_dynamic") or {}
+    entry = data.get("requests", {}).get(key)
+    if entry:
+        if entry["action"] != action:
+            raise WorkflowError("提交标识已被另一任务使用。")
+        found = job if entry["job_id"] == job.id else restore_wardrobe_swap_job(entry["job_id"])
+        if found is None:
+            raise WorkflowError("已接收过这次提交，请查询任务记录，不要重新生成。")
+        return key, found
+    for entry in data.get("requests", {}).values():
+        if entry["action"] != "generate":
+            continue
+        found = restore_wardrobe_swap_job(entry["job_id"])
+        if found and found.status in {"queued", "running", "submitted"}:
+            raise WorkflowError("本项目已有成片任务正在处理，请先等待该任务完成。")
+    return key, None
+
+
+@app.post("/api/wardrobe-swap/segments/assemble")
+def assemble_wardrobe_segments():
+    try:
+        job, mode = wardrobe_prepare_job_from_request()
+        output = wardrobe_segments.assemble(sys.modules[__name__], job)
+        if not output:
+            raise WorkflowError("请先完成所有分段的最终视频，再合成完整视频。")
+        return jsonify(job.public())
+    except Exception as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@app.get("/api/wardrobe-swap/segments/<group_id>/output")
+def wardrobe_segments_output(group_id):
+    try:
+        path = wardrobe_segments.book_path(sys.modules[__name__], group_id)
+        book = json.loads(path.read_text(encoding='utf-8'))
+        output = _runs_record_file(book.get('output'))
+        if not output:
+            raise WorkflowError('完整成片尚未生成。')
+        return send_file(output, mimetype='video/mp4', as_attachment=request.args.get('download')=='1', download_name='完整成片.mp4', conditional=True)
+    except Exception as exc:
+        return jsonify(error=str(exc)), 404
+
+
 @app.post("/api/wardrobe-swap/white-model")
+@serialize_wardrobe_dynamic_submit
 def create_wardrobe_swap_white_model_job():
     """Stage 2: submit only the paid Seedance white-model task."""
     try:
+        candidate = restore_wardrobe_swap_job(request.form.get("source_job_id", "").strip()) if request.form.get("source_job_id") else None
+        dynamic_key = ""
+        if candidate and wardrobe_mode_from_job(candidate) in DYNAMIC_EDIT_MODES:
+            dynamic_key, receipt = wardrobe_dynamic_request(candidate, "white")
+            if receipt is not None:
+                return jsonify(receipt.public()), 202
         job, mode = wardrobe_prepare_job_from_request()
         if not job.mosaic_path or not job.mosaic_path.is_file():
             raise WorkflowError("当前任务还没有人脸打码视频，请先完成本地打码。")
         source = wardrobe_prepare_source(job)
+        white_prompt = ""
+        if mode in DYNAMIC_EDIT_MODES:
+            if mode == "dynamic_object" and (job.cast_continuity.get("wardrobe_dynamic", {}).get("workflow_version") != 2 or job.cast_continuity["wardrobe_dynamic"].get("object_workflow") != "references"):
+                raise WorkflowError("请在有人物、服装参考流程中重新打码或上传主角白模；旧物品白模不能用于新流程。")
+            if mode == "dynamic_scene" and (job.cast_continuity.get("wardrobe_dynamic", {}).get("workflow_version") != 2 or job.cast_continuity["wardrobe_dynamic"].get("scene_workflow") != "references"):
+                raise WorkflowError("请重新打码生成绿底白模，或直接上传已有绿底白模；旧场景白模不能用于新流程。")
+            if not form_bool("mosaic_reviewed"):
+                raise WorkflowError("请先预览原片母版并确认替换目标。" if mode in DYNAMIC_ENVIRONMENT_MODES else "请先预览打码视频，确认出现的人脸已遮挡且没有明显漏码。")
+            data = job.cast_continuity["wardrobe_dynamic"]
+            white_prompt = dynamic_prompt(DYNAMIC_EDIT_PROFILES[mode]["white_prompt"], data["description"], request.form.get("white_prompt", ""), white=True, mode="dynamic" if mode == "dynamic_object" else mode)
+            data["white_prompt"] = white_prompt
+            data["requests"][dynamic_key] = {"action": "white", "job_id": job.id}
+            data["white_attempt"] = dynamic_key
+            job.white_model_path = None
+            job.output_path = None
+            wardrobe_segments.record_result(sys.modules[__name__], job, None)
+            with JOBS_LOCK:
+                JOBS.pop(f"{job.id}-white", None)
+        colored_prompt, color_plan = inline_cast.white_prompt(mode)
+        if colored_prompt: white_prompt = colored_prompt
+        if mode in DYNAMIC_EDIT_MODES:
+            job.cast_continuity["wardrobe_dynamic"]["white_prompt"] = white_prompt
+        job.cast_continuity["inline_pending_color_plan"] = color_plan
         job.update(
             status="running",
             stage="准备提交 Seedance 2.0 · 480p 白膜任务",
@@ -8252,10 +8750,14 @@ def create_wardrobe_swap_white_model_job():
 
         def worker() -> None:
             try:
-                run_wardrobe_white_model(job, source, start=2, span=96)
+                if mode in DYNAMIC_EDIT_MODES or colored_prompt:
+                    run_wardrobe_white_model(job, source, start=2, span=96, prompt_override=white_prompt, preserve_scene=True)
+                else:
+                    run_wardrobe_white_model(job, source, start=2, span=96)
+                job.cast_continuity["inline_color_plan"] = color_plan
                 job.update(
                     status="succeeded",
-                    stage="白膜视频已生成；现在可以单独提取人物、服装与场景素材",
+                    stage="绿底白模已生成；请预览后添加原片人物、服装和新场景参考" if mode == "dynamic_scene" else "主角白模已生成；请预览后添加原片人物与服装参考" if mode == "dynamic_object" else "主角白膜已生成；请确认动态背景和其他人物保留完整，再选择新人物与服装" if mode == "dynamic" else "白膜视频已生成；现在可以单独提取人物、服装与场景素材",
                     progress=100,
                     error="",
                     recovery_action="",
@@ -8285,6 +8787,8 @@ def create_wardrobe_swap_reference_extraction_job():
     """Stage 3: upload/reuse or extract the three visual reference types."""
     try:
         job, mode = wardrobe_prepare_job_from_request()
+        if mode in DYNAMIC_EDIT_MODES:
+            raise WorkflowError("动态场景模式不提取静态场景或原片人物，请直接选择新角色并上传服装。")
         if not job.white_model_path or not job.white_model_path.is_file():
             raise WorkflowError("当前任务还没有白膜视频，请先完成并预览白膜。")
         source = wardrobe_prepare_source(job)
@@ -8314,6 +8818,9 @@ def create_wardrobe_swap_reference_extraction_job():
         scene_prompt = request.form.get("scene_prompt", "").strip() or DEFAULT_SCENE_EXTRACTION_PROMPT
         clothing_prompt = request.form.get("clothing_prompt", "").strip() or DEFAULT_CLOTHING_TRIVIEW_PROMPT
         person_prompt = WARDROBE_NEUTRAL_PERSON_TRIVIEW_PROMPT
+        custom_person_source = request.form.get("custom_person_source", "library").strip().lower()
+        if mode == "custom" and custom_person_source not in {"extract", "library", "upload"}:
+            raise WorkflowError("随心换人物来源无效；请选择提取原片人物、角色库已有角色或上传新人物。")
         extract_missing = form_bool("extract_missing", True) or mode == "custom"
         missing_scene = mode == "custom" or (mode in {"person", "clothing"} and not job.scene_path)
         missing_clothing = mode == "custom" or (mode in {"person", "scene"} and not job.clothing_path)
@@ -8321,7 +8828,11 @@ def create_wardrobe_swap_reference_extraction_job():
         # different things.  A previously selected Asset must not suppress source
         # person extraction: users still need a preview they can inspect and submit
         # to their own character library.
-        missing_person = mode == "custom" or (
+        missing_person = (
+            mode == "custom"
+            and custom_person_source == "extract"
+            and not wardrobe_person_triview_is_current(job)
+        ) or (
             mode in {"scene", "clothing"}
             and not wardrobe_person_triview_is_current(job)
         )
@@ -8390,7 +8901,11 @@ def create_wardrobe_swap_reference_extraction_job():
                     cursor += per_span
                 stage = "白膜与当前模式所需素材均已准备完成"
                 if mode == "custom":
-                    stage = "随心换原人物、原服装和原场景均已提取；请分别选择使用原片或自行上传"
+                    stage = (
+                        "随心换原人物、原服装和原场景均已提取；请将人物送审并选择 Active 角色"
+                        if custom_person_source == "extract"
+                        else "随心换原服装和原场景已提取；请选择角色库 Active 人物"
+                    )
                 elif missing_person:
                     stage = "已提取原人物图；请将其加入角色库并选择 Active 角色后生成成片"
                 job.update(status="succeeded", stage=stage, progress=100, error="", recovery_action="")
@@ -8574,12 +9089,14 @@ def create_wardrobe_swap_person_extraction_job():
 def create_wardrobe_swap_prepare_job():
     try:
         mode = request.form.get("mode", "").strip().lower()
+        if mode in DYNAMIC_EDIT_MODES:
+            raise WorkflowError("动态替换模式请分别准备原片母版、预览确认、生成目标白模。")
         if mode not in WARDROBE_SWAP_MODES:
             raise WorkflowError("请选择只更换人物、只更换场景、只更换服装或随心换。")
         job = new_job(f"wardrobe_prepare_{mode}")
         source = save_upload(request.files.get("reference_video"), job.run_dir, "reference")
-        # 随心换必须从同一段原片重新提取人物、服装和场景，保证三个
-        # “使用原片”选项都来自本次视频，而不是沿用旧上传或旧缓存。
+        # 随心换的服装和场景从本次视频提取；人物身份统一通过火山
+        # Active 角色 Asset，只有用户选择“提取原片人物并入库”时才提取人物图。
         original_scene = None if mode == "custom" else save_optional_reference_image(
             job, "original_scene_image", "original_scene"
         )
@@ -8605,13 +9122,20 @@ def create_wardrobe_swap_prepare_job():
         scene_prompt = request.form.get("scene_prompt", "").strip() or DEFAULT_SCENE_EXTRACTION_PROMPT
         clothing_prompt = request.form.get("clothing_prompt", "").strip() or DEFAULT_CLOTHING_TRIVIEW_PROMPT
         person_prompt = WARDROBE_NEUTRAL_PERSON_TRIVIEW_PROMPT
+        custom_person_source = request.form.get("custom_person_source", "library").strip().lower()
+        if mode == "custom" and custom_person_source not in {"extract", "library", "upload"}:
+            raise WorkflowError("随心换人物来源无效；请选择提取原片人物、角色库已有角色或上传新人物。")
         extract_missing = form_bool("extract_missing", True)
         if mode == "custom":
             extract_missing = True
 
         missing_scene = mode == "custom" or (mode in {"person", "clothing"} and job.scene_path is None)
         missing_clothing = mode == "custom" or (mode in {"person", "scene"} and job.clothing_path is None)
-        missing_person = mode == "custom" or (
+        missing_person = (
+            mode == "custom"
+            and custom_person_source == "extract"
+            and not wardrobe_person_triview_is_current(job)
+        ) or (
             mode in {"scene", "clothing"}
             and not wardrobe_person_triview_is_current(job)
         )
@@ -8673,7 +9197,11 @@ def create_wardrobe_swap_prepare_job():
                     cursor += per_span
                 stage = "打码、白膜与源素材均已准备完成"
                 if mode == "custom":
-                    stage = "随心换原人物、原服装和原场景均已提取；请分别选择使用原片或自行上传"
+                    stage = (
+                        "随心换原人物、原服装和原场景均已提取；请将人物送审并选择 Active 角色"
+                        if custom_person_source == "extract"
+                        else "随心换原服装和原场景已提取；请选择角色库 Active 人物"
+                    )
                 elif missing_person:
                     stage = "已提取原人物图；请将其加入角色库并选择 Active 角色后生成成片"
                 job.update(status="succeeded", stage=stage, progress=100, error="")
@@ -8719,9 +9247,7 @@ def resume_wardrobe_prepare_after_white_download(job: WebJob, mode: str) -> None
                 or f"Seedance 白膜任务 {white_job.task_id} 的结果暂未下载成功；系统没有重新提交。"
             )
 
-        source = job.run_dir / "reference_first_15s.mp4"
-        if not source.is_file():
-            source = _run_artifact(job.run_dir, "reference", {".mp4", ".mov"})
+        source = wardrobe_prepare_source(job)
         if source is None or not source.is_file():
             raise WorkflowError("找不到原片或已裁剪的 15 秒原片，无法继续白膜校时。")
         working_source = normalize_wardrobe_source_duration(job, source)
@@ -8729,21 +9255,28 @@ def resume_wardrobe_prepare_after_white_download(job: WebJob, mode: str) -> None
         job.update(stage="白膜已下载，正在校正回原片时长", progress=78)
         white_output = conform_video_duration(
             white_job.output_path,
-            job.run_dir / "white_model.mp4",
+            wardrobe_white_output_path(job),
             source_info.duration,
             with_audio=False,
         )
+        white_output, _ = sanitize_video_visible_text_if_needed(
+            white_output, white_output.with_name("white_model_no_subtitles.mp4"),
+            preserve_audio=False, overlay_only=True,
+        )
+        white_output = wardrobe_audio.attach(white_output, working_source, white_output.with_name("white_model_original_audio.mp4"))
         job.white_model_path = white_output
+        if "inline_pending_color_plan" in job.cast_continuity:
+            job.cast_continuity["inline_color_plan"] = job.cast_continuity["inline_pending_color_plan"]
         job.update(
             source_duration=source_info.duration,
             depth_duration=inspect_video(white_output).duration,
-            generation_duration=match_seedance_cover_duration(source_info.duration),
+            generation_duration=max(5, match_seedance_cover_duration(source_info.duration)),
             progress=100,
         )
         job.log("已从原 Seedance 任务恢复白膜并校正时长，没有创建新的视频生成任务。")
         job.update(
             status="succeeded",
-            stage="白膜视频已恢复；现在可以单独提取人物、服装与场景素材",
+            stage="目标白模已恢复；预览确认后可上传替换参考图" if mode in DYNAMIC_ENVIRONMENT_MODES else "主角白模已恢复；预览确认后可选择新人物和服装" if mode == "dynamic" else "白膜视频已恢复；现在可以单独提取人物、服装与场景素材",
             progress=100,
             error="",
             recovery_action="",
@@ -8804,7 +9337,88 @@ def recover_wardrobe_white_model():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.post("/api/wardrobe-swap/restore-audio")
+def restore_wardrobe_audio():
+    """Repair saved silent masters/results locally, without changing their frames."""
+    try:
+        job, mode = wardrobe_prepare_job_from_request()
+        source = wardrobe_audio.original(sys.modules[__name__], job)
+        if not source or not video_has_audio(source):
+            raise WorkflowError("本地原片没有可恢复的音轨，请上传包含对白声音的原片。")
+        if not job.white_model_path or not job.white_model_path.is_file():
+            raise WorkflowError("请先生成或上传白模视频。")
+        for field in ('white_model_path', 'output_path'):
+            current = getattr(job, field)
+            if current and current.is_file():
+                output = current.with_name(current.stem.removesuffix('_original_audio') + '_original_audio.mp4')
+                timed = wardrobe_audio.match_source_duration(current, source)
+                setattr(job, field, wardrobe_audio.attach(timed, source, output))
+        if job.output_path:
+            wardrobe_segments.record_result(sys.modules[__name__], job, job.output_path)
+            wardrobe_segments.assemble(sys.modules[__name__], job)
+        job.log("已免费恢复白模和已有成片的原片声音。画面没有改变；已有闭嘴画面需用新规则重新生成成片才能修正口型。")
+        persist_wardrobe_swap_job(job, mode)
+        return jsonify(job.public())
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+def create_wardrobe_environment_generation(source_job: WebJob, mode: str, request_key: str):
+    """Bind exactly one replacement image to a selective object/scene master."""
+    profile = DYNAMIC_EDIT_PROFILES[mode]
+    image_upload = request.files.get("replacement_image")
+    has_upload = bool(image_upload and image_upload.filename)
+    saved_image = source_job.replacement_path
+    if not has_upload and not (saved_image and saved_image.is_file()):
+        raise WorkflowError(f"请上传{profile['image_label']}，对应 @图片1。")
+    prompt = dynamic_prompt(profile["final_prompt"], source_job.cast_continuity["wardrobe_dynamic"]["description"], request.form.get("prompt", ""), mode=mode)
+    resolution = request.form.get("resolution", "720p").strip()
+    if resolution not in {"480p", "720p"}:
+        raise WorkflowError("Seedance 2.5 成片分辨率只支持 480p 或 720p。")
+    job = new_job(f"wardrobe_generate_{mode}")
+    try:
+        if has_upload:
+            replacement = save_optional_reference_image(job, "replacement_image", "replacement")
+        else:
+            replacement = job.run_dir / f"replacement{saved_image.suffix}"
+            shutil.copyfile(saved_image, replacement)
+        job.replacement_path = prepare_wardrobe_seedance_reference(job, replacement, role="replacement", label=profile["image_label"])
+        job.white_model_path = source_job.white_model_path
+        job.mosaic_path = source_job.mosaic_path
+        job.cast_continuity["wardrobe_dynamic"] = json.loads(json.dumps(source_job.cast_continuity["wardrobe_dynamic"]))
+        job.cast_continuity["wardrobe_dynamic"]["final_prompt"] = prompt
+        references = [str(job.replacement_path)]
+        build_motion_reference_payload(prompt=prompt, image_sources=references, video_reference="https://validation.invalid/white.mp4", resolution=resolution)
+        options = {
+            "generation_channel": "api", "prompt": prompt, "model": DEFAULT_SEEDANCE_25_MODEL,
+            "resolution": resolution, "ratio": "adaptive", "duration": -1,
+            "generate_audio": form_bool("generate_audio", True), "watermark": False,
+            "delete_tos_after": True, "reference_upload_strategy": "stable",
+        }
+        source_job.cast_continuity["wardrobe_dynamic"]["requests"][request_key] = {"action": "generate", "job_id": job.id}
+        source_job.replacement_path = job.replacement_path
+        persist_wardrobe_swap_job(job, mode, source_job_id=source_job.id)
+        persist_wardrobe_swap_job(source_job, mode)
+        job.log(f"{profile['label']}：@视频1 为目标白模母版，@图片1 为{profile['image_label']}；保留人物及非目标区域。")
+        threading.Thread(
+            target=run_generation,
+            kwargs={
+                "job": job, "depth_path": job.white_model_path, "depth_reference": "",
+                "person_source": "", "clothing_source": "", "scene_source": "",
+                "reference_images": references, "options": options,
+                "on_finished": lambda completed: persist_wardrobe_generation_result(completed, source_job, mode),
+            },
+            daemon=True, name=f"wardrobe-generate-{mode}-{job.id}",
+        ).start()
+    except Exception as exc:
+        job_error(job, exc)
+        persist_wardrobe_swap_job(job, mode, source_job_id=source_job.id)
+        raise
+    return jsonify(job.public()), 202
+
+
 @app.post("/api/wardrobe-swap/generate")
+@serialize_wardrobe_dynamic_submit
 def create_wardrobe_swap_generation_job():
     try:
         source_job_id = request.form.get("source_job_id", "").strip()
@@ -8818,27 +9432,48 @@ def create_wardrobe_swap_generation_job():
                 raise
         if source_job.project != WARDROBE_SWAP_PROJECT:
             raise WorkflowError("所选任务不属于衣装智换。")
+        if not source_job.kind.startswith("wardrobe_prepare_"):
+            raise WorkflowError("请选择该模式的原片准备任务。")
         mode = wardrobe_mode_from_job(source_job)
         requested_mode = request.form.get("mode", mode).strip().lower()
         if requested_mode != mode:
             raise WorkflowError("当前模式与已准备的白膜任务不一致，请重新准备该模式。")
+        if mode == "dynamic_object":
+            return wardrobe_object.generate(source_job)
+        if mode == "dynamic_scene":
+            return wardrobe_scene.generate(source_job)
+        dynamic_key = ""
+        if mode in DYNAMIC_EDIT_MODES:
+            dynamic_key, receipt = wardrobe_dynamic_request(source_job, "generate")
+            if receipt is not None:
+                return jsonify(receipt.public()), 202
+            if source_job.status in {"queued", "running", "submitted"}:
+                raise WorkflowError("主角打码或白膜任务正在处理，请等待完成。")
+            if not form_bool("white_reviewed"):
+                raise WorkflowError("请预览白模并确认只有目标区域变白，人物、非目标区域及运镜正确。" if mode in DYNAMIC_ENVIRONMENT_MODES else "请预览白膜并确认只有指定主角变白，背景、道具和其他人物保留完整。")
         if not source_job.white_model_path or not source_job.white_model_path.is_file():
             raise WorkflowError("当前任务没有可用的白膜视频。")
-        person_asset = ""
-        if mode != "custom":
-            person_asset = requested_character_asset()
-            if not person_asset and mode != "person":
-                person_asset = next(
-                    (
-                        str(actor.get("trusted_asset_uri") or "")
-                        for actor in source_job.actors
-                        if str(actor.get("trusted_asset_uri") or "").startswith("asset://")
-                    ),
-                    "",
-                )
-            if not person_asset:
-                role_label = "新人物" if mode == "person" else "原片人物"
-                raise WorkflowError(f"请先从火山角色库选择状态为 Active 的{role_label}。")
+        if mode in DYNAMIC_ENVIRONMENT_MODES:
+            return create_wardrobe_environment_generation(source_job, mode, dynamic_key)
+        person_asset = requested_character_asset()
+        if not person_asset and mode not in {"person", "custom", "dynamic"}:
+            person_asset = next(
+                (
+                    str(actor.get("trusted_asset_uri") or "")
+                    for actor in source_job.actors
+                    if str(actor.get("trusted_asset_uri") or "").startswith("asset://")
+                ),
+                "",
+            )
+        if not person_asset:
+            role_label = "新人物" if mode in {"person", "dynamic"} else "随心换最终人物" if mode == "custom" else "原片人物"
+            raise WorkflowError(f"请先从火山角色库选择状态为 Active 的{role_label}。")
+        if mode == "dynamic":
+            raw_asset = ark_assets_client().get_asset(person_asset[8:])
+            if _ark_asset_value(raw_asset, "Status", "status") != "Active" or _ark_asset_value(raw_asset, "AssetType", "asset_type") not in {"Image", ""}:
+                raise WorkflowError("所选人物尚未审核为 Active 图片角色，请刷新角色库后重新选择。")
+            if not inline_cast.submitted() and request.files.get("new_clothing_image"):
+                dynamic_prompt(DYNAMIC_FINAL_PROMPT, source_job.cast_continuity["wardrobe_dynamic"]["description"], request.form.get("prompt", ""))
 
         job = new_job(f"wardrobe_generate_{mode}")
         job.white_model_path = source_job.white_model_path
@@ -8849,18 +9484,20 @@ def create_wardrobe_swap_generation_job():
         scene_source = ""
         clothing_source = ""
         person_source = person_asset
-        if mode == "person":
+        job.actors = [{"id": 1, "role": "最终人物", "trusted_asset_uri": person_asset}]
+        if mode == "dynamic":
+            new_clothing = save_optional_reference_image(job, "new_clothing_image", "new_clothing")
+            job.clothing_path = new_clothing
+            clothing_source = str(new_clothing)
+            job.cast_continuity["wardrobe_dynamic"] = json.loads(json.dumps(source_job.cast_continuity["wardrobe_dynamic"]))
+        elif mode == "person":
             if not source_job.scene_path or not source_job.scene_path.is_file():
                 raise WorkflowError("缺少原片背景图，请上传或先用 Seedream 5.0 提取。")
-            if not source_job.clothing_path or not source_job.clothing_path.is_file():
-                raise WorkflowError("缺少原片服装图，请上传或先用 Seedream 5.0 提取。")
             job.scene_path = source_job.scene_path
             job.clothing_path = source_job.clothing_path
             scene_source = str(job.scene_path)
             clothing_source = str(job.clothing_path)
         elif mode == "scene":
-            if not source_job.clothing_path or not source_job.clothing_path.is_file():
-                raise WorkflowError("缺少原片服装图，请上传或先用 Seedream 5.0 提取。")
             new_scene = save_optional_reference_image(job, "new_scene_image", "new_scene")
             if new_scene is None:
                 raise WorkflowError("请选择需要替换的新场景图。")
@@ -8872,21 +9509,18 @@ def create_wardrobe_swap_generation_job():
             if not source_job.scene_path or not source_job.scene_path.is_file():
                 raise WorkflowError("缺少原片场景图，请上传或先用 Seedream 5.0 提取。")
             new_clothing = save_optional_reference_image(job, "new_clothing_image", "new_clothing")
-            if new_clothing is None:
-                raise WorkflowError("请选择需要替换的新服装图。")
             job.scene_path = source_job.scene_path
             job.clothing_path = new_clothing
             scene_source = str(job.scene_path)
             clothing_source = str(new_clothing)
         else:
             choices = {
-                "person": request.form.get("custom_person_choice", "original").strip().lower(),
                 "clothing": request.form.get("custom_clothing_choice", "original").strip().lower(),
                 "scene": request.form.get("custom_scene_choice", "original").strip().lower(),
             }
             invalid_choices = [name for name, choice in choices.items() if choice not in {"original", "upload"}]
             if invalid_choices:
-                raise WorkflowError("随心换参考来源无效，请重新选择原片提取图或自行上传。")
+                raise WorkflowError("随心换服装或场景来源无效，请重新选择原片提取图或自行上传。")
 
             def select_custom_reference(
                 role: str,
@@ -8895,54 +9529,48 @@ def create_wardrobe_swap_generation_job():
                 upload_stem: str,
                 label: str,
             ) -> Path:
+                if role == "clothing" and form_bool("primary_clothing_optional"):
+                    return save_optional_reference_image(job, "primary_clothing_image", "primary_clothing") if request.form.get("primary_clothing_state") == "upload" else (source_path if request.form.get("primary_clothing_state") == "saved" else None)
+                if role == "clothing" and choices[role] == "original":
+                    return source_path if source_path and source_path.is_file() else None
                 if choices[role] == "upload":
                     uploaded = save_optional_reference_image(job, upload_field, upload_stem)
-                    if uploaded is None:
+                    if uploaded is None and role != "clothing":
                         raise WorkflowError(f"{label}已选择自行上传，但尚未上传图片。")
                     return uploaded
                 if source_path is None or not source_path.is_file():
                     raise WorkflowError(f"缺少从原片提取的{label}，请重新准备随心换素材。")
                 return source_path
 
-            job.person_path = select_custom_reference(
-                "person", source_job.person_path, "custom_person_image", "custom_person", "人物图"
-            )
             job.clothing_path = select_custom_reference(
                 "clothing", source_job.clothing_path, "custom_clothing_image", "custom_clothing", "服装图"
             )
             job.scene_path = select_custom_reference(
                 "scene", source_job.scene_path, "custom_scene_image", "custom_scene", "场景图"
             )
-            person_source = str(job.person_path)
             clothing_source = str(job.clothing_path)
             scene_source = str(job.scene_path)
 
         # Ark validates local image geometry after the paid task is created. Do
         # the same checks locally and repair invalid boards before submission so
         # an over-wide three-view image cannot consume a failed request again.
-        job.scene_path = prepare_wardrobe_seedance_reference(
-            job,
-            scene_source,
-            role="scene",
-            label="场景",
-        )
-        scene_source = str(job.scene_path)
-        job.clothing_path = prepare_wardrobe_seedance_reference(
-            job,
-            clothing_source,
-            role="clothing",
-            label="服装",
-        )
-        clothing_source = str(job.clothing_path)
-        if mode == "custom":
-            job.person_path = prepare_wardrobe_seedance_reference(
+        if mode != "dynamic":
+            job.scene_path = prepare_wardrobe_seedance_reference(
                 job,
-                person_source,
-                role="person",
-                label="人物",
+                scene_source,
+                role="scene",
+                label="场景",
             )
-            person_source = str(job.person_path)
-
+            scene_source = str(job.scene_path)
+        if form_bool("primary_clothing_optional"):
+            choice = request.form.get("primary_clothing_state", "none")
+            if choice == "upload":
+                job.clothing_path = save_optional_reference_image(job, "primary_clothing_image", "primary_clothing")
+            elif choice == "none":
+                job.clothing_path = None
+        if job.clothing_path:
+            job.clothing_path = prepare_wardrobe_seedance_reference(job, job.clothing_path, role="clothing", label="人物1服装")
+        clothing_source = str(job.clothing_path) if job.clothing_path else ""
         options = {
             "generation_channel": "api",
             "prompt": build_wardrobe_swap_prompt(mode),
@@ -8955,12 +9583,31 @@ def create_wardrobe_swap_generation_job():
             "delete_tos_after": True,
             "reference_upload_strategy": "stable",
         }
+        reference_images = [person_source] + ([clothing_source] if clothing_source else []) + ([scene_source] if mode != "dynamic" else [])
+        people = inline_cast.collect(sys.modules[__name__], source_job, job, reference_images)
         custom_prompt = request.form.get("prompt", "").strip()
-        if custom_prompt and custom_prompt != options["prompt"]:
+        if people or not clothing_source:
+            if custom_prompt == build_wardrobe_swap_prompt(mode): custom_prompt = ''
+            options["prompt"] = inline_cast.final_prompt(mode, people, len(reference_images), custom_prompt,
+                                                        color_plan=source_job.cast_continuity.get('inline_color_plan'), first_clothing=bool(clothing_source))
+            build_motion_reference_payload(prompt=options["prompt"], image_sources=reference_images, video_reference="https://validation.invalid/white.mp4", resolution=resolution)
+        if mode == "dynamic":
+            if not people and clothing_source:
+                options["prompt"] = dynamic_prompt(DYNAMIC_FINAL_PROMPT, source_job.cast_continuity["wardrobe_dynamic"]["description"], custom_prompt)
+            build_motion_reference_payload(prompt=options["prompt"], image_sources=reference_images,
+                                           video_reference="https://validation.invalid/white.mp4", resolution=resolution)
+            source_job.cast_continuity["wardrobe_dynamic"]["requests"][dynamic_key] = {"action": "generate", "job_id": job.id}
+            job.cast_continuity["wardrobe_dynamic"]["final_prompt"] = options["prompt"]
+            persist_wardrobe_swap_job(job, mode, source_job_id=source_job.id)
+            persist_wardrobe_swap_job(source_job, mode)
+        elif not people and clothing_source and custom_prompt and custom_prompt != options["prompt"]:
             options["prompt"] = f"{options['prompt']}\n补充要求：{custom_prompt[:500]}"
+        inline_cast.remember(source_job, job)
+        persist_wardrobe_swap_job(job, mode, source_job_id=source_job.id)
+        persist_wardrobe_swap_job(source_job, mode)
         job.log(
             f"衣装智换·{WARDROBE_MODE_LABELS[mode]}：将使用 Seedance 2.5 / {resolution}，"
-            "白膜锁定时空，新旧人物、服装与场景按三张参考图严格分工。"
+            + ("主角白膜保留原动态场景；@图片1为人物Asset，@图片2为服装；不提交场景图。" if mode == "dynamic" else "白膜锁定时空，新旧人物、服装与场景按三张参考图严格分工。")
         )
         threading.Thread(
             target=run_generation,
@@ -8972,6 +9619,7 @@ def create_wardrobe_swap_generation_job():
                 "clothing_source": clothing_source,
                 "scene_source": scene_source,
                 "options": options,
+                **({"reference_images": reference_images} if mode == "dynamic" or people else {}),
                 "on_finished": lambda completed_job: persist_wardrobe_generation_result(
                     completed_job,
                     source_job,
@@ -8984,6 +9632,30 @@ def create_wardrobe_swap_generation_job():
         return jsonify(job.public()), 202
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/inline-cast/prompt-preview")
+def inline_cast_prompt_preview():
+    try:
+        values = request.get_json(silent=True)
+        if not isinstance(values, dict): raise WorkflowError("提示词预览数据无效。")
+        return jsonify(inline_cast.prompt_preview(sys.modules[__name__], values))
+    except (WorkflowError, ValueError, TypeError) as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@app.get("/api/inline-cast/<job_id>/<person_id>/clothing")
+def inline_cast_clothing_file(job_id, person_id):
+    try:
+        job = JOBS.get(job_id) or restore_wardrobe_swap_job(job_id)
+        if not job:
+            job = wardrobe_continuation.load(job_id)
+        record = next(p for p in job.cast_continuity.get('inline_cast', []) if p['id'] == person_id)
+        path = _runs_record_file(record.get('clothing', ''))
+        if not path: return jsonify(error='服装参考不存在。'), 404
+        return send_file(path, max_age=0)
+    except Exception:
+        return jsonify(error='服装参考不存在。'), 404
 
 
 @app.post("/api/scene-only/prepare")
@@ -9696,6 +10368,80 @@ def update_long_shot(job: WebJob, index: int, **values: Any) -> None:
                 break
 
 
+def real_white_model_failure_state(
+    message: Any,
+    *,
+    task_id: str = "",
+    recovery_action: str = "",
+) -> dict[str, Any]:
+    """Describe a real-person white-model failure without overstating billing state."""
+
+    raw_message = str(message or "白膜生成未完成。").strip()
+    category = classify_error_message(raw_message)
+    real_network_text = raw_message.lower()
+    if category["id"] not in {"review", "balance", "parameter"} and any(
+        token in real_network_text
+        for token in (
+            "timed out",
+            "timeout",
+            "tempfile.org",
+            "sslerror",
+            "ssleoferror",
+            "sslwantwriteerror",
+        )
+    ):
+        # Keep this expanded classification private to the real-person white-model
+        # path so the virtual-person and wardrobe error behavior remains untouched.
+        category = {"id": "network", "label": "网络"}
+    submitted = bool(str(task_id or "").strip())
+    ambiguous_submission = recovery_action == "recover_seedance_submission"
+    if category["id"] == "review":
+        return {
+            "status": "failed",
+            "stage": "审核失败：已提交，禁止原样重试",
+            "error": (
+                "审核失败：本次请求已经提交至 Seedance 平台，但输入或输出被平台审核拒绝。"
+                "禁止使用相同打码视频和相同提示词原样重试；请先让输入或白膜提示发生变化。"
+                f"详情：{raw_message}"
+            ),
+            "error_category": category,
+            "submitted": True,
+            "retryable": False,
+        }
+    if category["id"] == "network" and not submitted and not ambiguous_submission:
+        return {
+            "status": "retryable",
+            "stage": "网络失败：未提交、未计费，可以安全重试",
+            "error": (
+                "网络失败：参考视频公网通道未能建立或验证，Seedance 付费任务未提交、未计费，"
+                f"可以安全重试。详情：{raw_message}"
+            ),
+            "error_category": category,
+            "submitted": False,
+            "retryable": True,
+        }
+    if category["id"] == "network":
+        return {
+            "status": "failed",
+            "stage": "网络失败：任务已提交或提交结果待确认",
+            "error": (
+                "网络失败：任务已经取得任务 ID，或提交结果暂时无法确认。为避免重复计费，"
+                f"请恢复查询现有任务，不要直接重新提交。详情：{raw_message}"
+            ),
+            "error_category": category,
+            "submitted": submitted,
+            "retryable": False,
+        }
+    return {
+        "status": "failed",
+        "stage": f"{category['label']}失败：白膜生成未完成",
+        "error": f"{category['label']}失败：{raw_message}",
+        "error_category": category,
+        "submitted": submitted,
+        "retryable": False,
+    }
+
+
 def run_long_mosaic_preparation(
     job: WebJob,
     *,
@@ -10088,16 +10834,30 @@ def run_long_white_model_generation(
     confirmed_paid_retry_indices: set[int] | None = None,
 ) -> None:
     """Generate and locally gate a green-screen white-model anchor for every shot."""
+    real_person_mode = is_real_person_long_job(job)
+    active_shot_index = 0
+    active_signature = ""
+    active_sub_job: WebJob | None = None
     try:
         forced_indices = set(force_shot_indices or set())
         confirmed_retry_indices = set(confirmed_paid_retry_indices or set())
-        prompt = DEFAULT_WHITE_MODEL_PROMPT
+        prompt = (
+            REAL_PERSON_SAFE_WHITE_MODEL_PROMPT
+            if real_person_mode
+            else DEFAULT_WHITE_MODEL_PROMPT
+        )
         outputs: list[Path] = []
         pending_quality_indices: list[int] = []
-        real_person_mode = is_real_person_long_job(job)
         total = len(job.shots)
         for ordinal, shot in enumerate(list(job.shots), start=1):
             index = int(shot.get("index") or ordinal)
+            active_shot_index = index
+            active_signature = ""
+            active_sub_job = None
+            from cast_colors import color_model_prompt
+            color_plan = options.get("cast_color_plans", {}).get(index, [])
+            prompt = (color_model_prompt(color_plan, green=True) if color_plan else
+                      REAL_PERSON_SAFE_WHITE_MODEL_PROMPT if real_person_mode else DEFAULT_WHITE_MODEL_PROMPT)
             source = Path(str(shot.get("source_path") or ""))
             mosaic = Path(str(shot.get("mosaic_path") or ""))
             if not source.is_file() or not mosaic.is_file():
@@ -10141,6 +10901,22 @@ def run_long_white_model_generation(
                 performance_prompt=performance_prompt,
                 quality_gate=is_real_person_long_job(job),
             )
+            active_signature = signature
+            if real_person_mode and str(shot.get("white_model_failed_signature") or "") == signature:
+                duplicate_error = (
+                    f"分镜 {index:02d} 的同一打码视频与同一白膜提示词已经被平台审核拒绝；"
+                    "禁止原样重复提交。请先重新生成打码视频，或等待白膜提示词/输入发生变化后再试。"
+                )
+                duplicate_state = real_white_model_failure_state(
+                    f"敏感内容审核：{duplicate_error}",
+                    task_id=str(shot.get("white_model_failed_task_id") or "previous-task"),
+                )
+                update_long_shot(
+                    job,
+                    index,
+                    **duplicate_state,
+                )
+                raise WorkflowError(duplicate_state["error"])
             existing = Path(str(shot.get("white_model_path") or "")) if shot.get("white_model_path") else None
             force_regenerate = index in forced_indices
             can_reuse = bool(
@@ -10162,6 +10938,7 @@ def run_long_white_model_generation(
                         source,
                         existing,
                         expected_actor_count=expected_count,
+                        cast_colors=tuple(r['color'] for r in shot.get('white_color_plan', [])),
                     )
                     update_long_shot(
                         job,
@@ -10209,18 +10986,33 @@ def run_long_white_model_generation(
                 long_shot_stable_detected_people_count(shot),
                 int(shot.get("suggested_actor_count") or 0),
             )
-            previous_generation_count = long_white_model_generation_count(shot)
+            previous_generation_count = (
+                real_long_white_model_paid_generation_count(shot)
+                if real_person_mode
+                else long_white_model_generation_count(shot)
+            )
+            previous_attempt_count = (
+                real_long_white_model_attempt_count(shot)
+                if real_person_mode
+                else previous_generation_count
+            )
             renewed_paid_retry = real_person_mode and index in confirmed_retry_indices
             attempts = 1 if renewed_paid_retry else 1 + (MAX_REAL_AUTOMATIC_WHITE_MODEL_RETRIES if real_person_mode else 0)
             white_output: Path | None = None
             white_qa: dict[str, Any] | None = None
             final_sub_job: WebJob | None = None
             used_retry_count = 0
+            paid_generation_count = previous_generation_count
             for attempt in range(attempts):
                 used_retry_count = attempt
-                total_generation_count = previous_generation_count + attempt + 1
-                sub_id = f"{job.id}-w{index:02d}q{total_generation_count}"
-                attempt_dir = white_task_dir / f"attempt_{total_generation_count}"
+                attempt_sequence = previous_attempt_count + attempt + 1
+                total_generation_count = (
+                    paid_generation_count
+                    if real_person_mode
+                    else previous_generation_count + attempt + 1
+                )
+                sub_id = f"{job.id}-w{index:02d}q{attempt_sequence}"
+                attempt_dir = white_task_dir / f"attempt_{attempt_sequence}"
                 attempt_dir.mkdir(parents=True, exist_ok=True)
                 sub_job = WebJob(
                     id=sub_id,
@@ -10229,6 +11021,7 @@ def run_long_white_model_generation(
                     run_dir=attempt_dir,
                     depth_path=reference,
                 )
+                active_sub_job = sub_job
                 final_sub_job = sub_job
                 with JOBS_LOCK:
                     JOBS[sub_id] = sub_job
@@ -10243,11 +11036,14 @@ def run_long_white_model_generation(
                     white_model_manually_approved=False,
                     white_model_approval_required=False,
                     white_model_total_generation_count=total_generation_count,
+                    white_model_attempt_count=attempt_sequence,
                 )
                 _persist_long_job(job)
                 shot_options = dict(effective_options)
                 shot_options["duration"] = generation_duration
                 correction = build_white_model_correction_prompt(white_qa or {}) if attempt else ""
+                if color_plan:
+                    correction = correction.replace('纯白', '按人物绑定颜色的')
                 shot_options["prompt"] = "\n".join(
                     value
                     for value in (
@@ -10259,6 +11055,10 @@ def run_long_white_model_generation(
                     if value
                 )
                 shot_options["generate_audio"] = False
+                if real_person_mode:
+                    shot_options["reference_upload_strategy"] = "stable"
+                    shot_options["reference_upload_context"] = "真实人物复刻重绘白膜"
+                    shot_options["verify_tos_public"] = True
                 run_generation(
                     sub_job,
                     depth_path=reference,
@@ -10270,10 +11070,41 @@ def run_long_white_model_generation(
                     progress_start=5,
                     video_only=True,
                 )
+                if real_person_mode and sub_job.task_id:
+                    paid_generation_count += 1
+                    update_long_shot(
+                        job,
+                        index,
+                        white_model_total_generation_count=paid_generation_count,
+                    )
+                    _persist_long_job(job)
                 if sub_job.status != "succeeded" or not sub_job.output_path or not sub_job.output_path.is_file():
-                    raise WorkflowError(sub_job.error or f"分镜 {index:02d} 白模生成未完成。")
+                    raw_error = sub_job.error or f"分镜 {index:02d} 白模生成未完成。"
+                    if real_person_mode:
+                        failure_state = real_white_model_failure_state(
+                            raw_error,
+                            task_id=sub_job.task_id,
+                            recovery_action=sub_job.recovery_action,
+                        )
+                        sub_job.update(
+                            status=failure_state["status"],
+                            stage=failure_state["stage"],
+                            error=failure_state["error"],
+                        )
+                        shot_failure_values = dict(failure_state)
+                        if failure_state["error_category"]["id"] == "review":
+                            shot_failure_values.update(
+                                white_model_failed_signature=signature,
+                                white_model_failed_task_id=(
+                                    sub_job.task_id or "review-rejected-without-task-id"
+                                ),
+                            )
+                        update_long_shot(job, index, **shot_failure_values)
+                        _persist_long_job(job)
+                        raise WorkflowError(failure_state["error"])
+                    raise WorkflowError(raw_error)
                 attempt_suffix = (
-                    f"_manual_retry_{total_generation_count}"
+                    f"_manual_retry_{attempt_sequence}"
                     if renewed_paid_retry
                     else "" if attempt == 0
                     else f"_quality_retry_{attempt}"
@@ -10301,6 +11132,7 @@ def run_long_white_model_generation(
                     source,
                     white_output,
                     expected_actor_count=expected_count,
+                    cast_colors=tuple(r['color'] for r in color_plan),
                 )
                 if white_qa["passed"]:
                     break
@@ -10324,14 +11156,22 @@ def run_long_white_model_generation(
                 index,
                 white_model_path=str(white_output),
                 white_model_signature=signature,
+                white_color_plan=color_plan,
                 white_model_task_id=final_sub_job.task_id,
                 white_model_resolution=str(options.get("resolution") or "480p"),
                 white_model_model=str(options.get("model") or DEFAULT_SEEDANCE_MODEL),
                 white_model_qa=white_qa,
                 white_model_retry_count=used_retry_count,
-                white_model_total_generation_count=previous_generation_count + used_retry_count + 1,
+                white_model_total_generation_count=(
+                    paid_generation_count
+                    if real_person_mode
+                    else previous_generation_count + used_retry_count + 1
+                ),
+                white_model_attempt_count=previous_attempt_count + used_retry_count + 1,
                 white_model_approval_required=not white_passed,
                 white_model_manually_approved=False,
+                white_model_failed_signature="",
+                white_model_failed_task_id="",
                 status="ready" if white_passed else "awaiting_approval",
                 stage="白模质量验收通过" if white_passed else "白模质量未通过，禁止生成成片",
                 progress=100,
@@ -10370,7 +11210,40 @@ def run_long_white_model_generation(
         job.update(status="succeeded", stage="全部白模分镜已完成并通过质量闸门", progress=100, error="")
         _persist_long_job(job)
     except Exception as exc:
-        job_error(job, exc)
+        failure_message = str(exc) or exc.__class__.__name__
+        if real_person_mode and active_shot_index:
+            with job.lock:
+                active_shot = next(
+                    (
+                        shot
+                        for shot in job.shots
+                        if int(shot.get("index") or 0) == active_shot_index
+                    ),
+                    None,
+                )
+                active_status = str((active_shot or {}).get("status") or "")
+            if active_status in {"", "queued", "running"}:
+                failure_state = real_white_model_failure_state(
+                    failure_message,
+                    task_id=active_sub_job.task_id if active_sub_job is not None else "",
+                    recovery_action=(
+                        active_sub_job.recovery_action if active_sub_job is not None else ""
+                    ),
+                )
+                if (
+                    failure_state["error_category"]["id"] == "review"
+                    and active_sub_job is not None
+                    and active_signature
+                ):
+                    failure_state.update(
+                        white_model_failed_signature=active_signature,
+                        white_model_failed_task_id=(
+                            active_sub_job.task_id or "review-rejected-without-task-id"
+                        ),
+                    )
+                update_long_shot(job, active_shot_index, **failure_state)
+                failure_message = failure_state["error"]
+        job_error(job, WorkflowError(failure_message))
         _persist_long_job(job)
 
 
@@ -10823,6 +11696,7 @@ def run_long_video_generation(
                         else 0
                     )
                     localized["position_anchor"] = position
+                    localized["model_color"] = next((r['color'] for r in shot.get('white_color_plan',[]) if r['id'] == f'p{slot_index+1}'), '')
                     localized_actors.append(localized)
                 shot_options["prompt"] = build_long_shot_prompt(
                     localized_actors,
@@ -11416,6 +12290,7 @@ def delete_long_video_shot(job_id: str, shot_index: int):
             job.mosaic_path = None
             job.white_model_path = None
             job.output_path = None
+            wardrobe_segments.record_result(sys.modules[__name__], job, None)
             summaries = [
                 {"index": int(shot.get("index") or 0), **dict(shot["performance"])}
                 for shot in job.shots
@@ -11510,6 +12385,7 @@ def approve_real_long_white_model(job_id: str, shot_index: int):
             qa = validate_white_model(
                 Path(str(shot.get("source_path") or "")),
                 white_path,
+                cast_colors=tuple(r['color'] for r in shot.get('white_color_plan', [])),
                 expected_actor_count=max(
                     long_shot_stable_detected_people_count(shot),
                     int(shot.get("suggested_actor_count") or 0),
@@ -11835,7 +12711,7 @@ def generate_long_video_white_model_job():
             selected_shot = next(
                 shot for shot in job.shots if int(shot.get("index") or 0) == selected_index
             )
-            completed_attempts = long_white_model_generation_count(selected_shot)
+            completed_attempts = real_long_white_model_paid_generation_count(selected_shot)
             if completed_attempts >= 2:
                 if not form_bool("white_retry_cost_confirmed"):
                     raise WorkflowError(
@@ -11862,13 +12738,20 @@ def generate_long_video_white_model_job():
         options["resolution"] = "480p"
         options["generate_audio"] = False
         options["watermark"] = False
+        if form_bool('colored_cast'):
+            from cast_colors import long_color_plans
+            plans = long_color_plans(job, sys.modules[__name__])
+            # A single source identity keeps the established white-only pipeline.
+            if len({r['color'] for plan in plans.values() for r in plan}) > 1:
+                options['cast_color_plans'] = plans
+                job.log('多人母版按稳定身份分配颜色；切镜和走位后不重新分配。请逐镜预览颜色及角色对应。')
         job.update(kind="long_white_model", status="queued", stage="等待逐分镜生成白模", progress=0, error="")
         job.log("白模阶段固定使用 Seedance 2.0 / 480p 低成本规格；最终重绘分辨率不受影响。")
         if regeneration_mode == "selected":
             selected_index = next(iter(force_shot_indices))
             job.log(f"已请求只重新生成分镜 {selected_index:02d} 的白模；其他白模将直接复用后重新合并。")
             if selected_index in confirmed_paid_retry_indices:
-                completed_attempts = long_white_model_generation_count(
+                completed_attempts = real_long_white_model_paid_generation_count(
                     next(shot for shot in job.shots if int(shot.get("index") or 0) == selected_index)
                 )
                 job.log(
@@ -12017,6 +12900,7 @@ def generate_long_video_job():
                         qa = validate_white_model(
                             source_path,
                             white_path,
+                            cast_colors=tuple(r['color'] for r in shot.get('white_color_plan', [])),
                             expected_actor_count=max(
                                 long_shot_stable_detected_people_count(shot),
                                 int(shot.get("suggested_actor_count") or 0),
@@ -12725,11 +13609,15 @@ def job_file(job_id: str, kind: str):
             if kind == "performance"
             else None
         )
+        if kind == "source" and job.project == WARDROBE_SWAP_PROJECT and job.kind.startswith("wardrobe_prepare_"):
+            path = wardrobe_prepare_source(job)
+        if kind == "replacement" and job.project == WARDROBE_SWAP_PROJECT:
+            path = job.replacement_path
         if path is None or not path.is_file():
             raise WorkflowError("文件尚未生成或已经不存在。")
         as_attachment = request.args.get("download") == "1"
-        if kind in {"depth", "output", "mosaic", "white_model"}:
-            mimetype = "video/mp4"
+        if kind in {"depth", "output", "mosaic", "white_model", "source"}:
+            mimetype = "video/quicktime" if path.suffix.lower() == ".mov" else "video/mp4"
         elif kind == "performance":
             mimetype = "application/json"
         else:
@@ -12884,6 +13772,21 @@ def open_folder(job_id: str):
 @app.errorhandler(413)
 def too_large(_error):
     return jsonify({"error": "上传文件总大小超过 450 MB。"}), 413
+
+
+from motion_transfer import MotionTransfer
+
+motion_transfer = MotionTransfer(app, sys.modules[__name__])
+
+from multi_cast import MultiCast
+multi_cast = MultiCast(app, sys.modules[__name__])
+
+from wardrobe_continuation import WardrobeContinuation
+from wardrobe_object import WardrobeObject
+
+wardrobe_continuation = WardrobeContinuation(app, sys.modules[__name__])
+wardrobe_object = WardrobeObject(app, sys.modules[__name__])
+wardrobe_scene = WardrobeObject(app, sys.modules[__name__], mode="dynamic_scene")
 
 
 def main() -> None:

@@ -7,7 +7,7 @@
   <title>衣装智换 · DepthFlow Studio</title>
   <link rel="stylesheet" href="/static/styles.css?v=20260825-1">
   <link rel="stylesheet" href="/static/workflow_shell.css?v=20260825-2">
-  <link rel="stylesheet" href="/static/wardrobe.css?v=20260825-2">
+  <link rel="stylesheet" href="/static/wardrobe.css?v=20260914-6">
 </head>
 <body>
   <header class="topbar wardrobe-topbar">
@@ -31,25 +31,35 @@
 
     <main class="wardrobe-main">
       <section class="wardrobe-hero">
-        <div><span>UNIFIED LOCAL REPLACEMENT</span><h1>一个项目，完成四种视觉智换</h1><p>白膜只控制动作、站位、构图与运镜；人物角色、服装和场景各自使用独立参考，也可在随心换中自由组合。</p></div>
+        <div><span>UNIFIED LOCAL REPLACEMENT</span><h1>一个项目，完成八种视觉智换</h1><p>支持人物、服装、场景替换与自由组合；运动镜头可分别更换人物、物品和场景，以视频母版保持动作、遮挡与运镜。</p></div>
         <div class="hero-flow"><b>原片打码</b><i>→</i><b>白膜母版</b><i>→</i><b>三类素材</b><i>→</i><b>Seedance 2.5</b></div>
       </section>
 
       <section id="mode" class="panel mode-panel">
-        <div class="panel-heading"><div><span>步骤 01</span><h2>选择替换功能</h2></div><small>四种模式共用打码、白膜、素材库和结果预览能力</small></div>
+        <div class="panel-heading"><div><span>步骤 01</span><h2>选择替换功能</h2></div><small>八种模式分别保存任务，支持独立预览与下载</small></div>
         <div class="mode-grid" role="tablist">
           <button type="button" class="mode-card" data-mode="person"><i>人</i><span><b>只更换人物</b><small>原背景 + 原服装 + 新人物</small></span></button>
           <button type="button" class="mode-card" data-mode="scene"><i>景</i><span><b>只更换场景</b><small>原人物 + 原服装 + 新场景</small></span></button>
           <button type="button" class="mode-card" data-mode="clothing"><i>衣</i><span><b>只更换服装</b><small>原人物 + 原场景 + 新服装</small></span></button>
           <button type="button" class="mode-card" data-mode="custom"><i>换</i><span><b>随心换</b><small>人物 + 服装 + 场景自由组合</small></span></button>
+          <button type="button" class="mode-card" data-mode="dynamic"><i>动</i><span><b>动态场景更换人物</b><small>保留运动镜头与背景，只换指定主角</small></span></button>
+          <button type="button" class="mode-card" data-mode="dynamic_object"><i>物</i><span><b>动态物品替换</b><small>只换指定物品，保持握持、运动与遮挡</small></span></button>
+          <button type="button" class="mode-card" data-mode="dynamic_scene"><i>境</i><span><b>动态背景替换</b><small>引用原片或绿底白模，保留动作与运镜换背景</small></span></button>
+          <a class="mode-card" href="/projects/wardrobe-continuation"><i>续</i><span><b>按秒改写视频</b><small>按秒描述修改要求，参考完整视频直接生成</small></span></a>
         </div>
         <input id="modeInput" name="mode" type="hidden" value="person">
       </section>
 
       <section id="source" class="panel">
-        <div class="panel-heading"><div><span>步骤 02</span><h2>上传原片</h2></div><small>超过 15 秒自动截取前 15 秒</small></div>
-        <label class="media-drop"><input id="referenceVideo" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"><span class="drop-icon">▶</span><b>选择原片视频</b><small id="videoName">MP4 / MOV · 后续流程最长使用前 15 秒</small></label>
+        <div class="panel-heading"><div><span>步骤 02</span><h2>上传原片</h2></div><small>超过15秒完整分段制作；不足5秒末尾补黑场</small></div>
+        <label class="media-drop"><input id="referenceVideo" type="file" accept="video/mp4,video/quicktime,.mp4,.mov"><span class="drop-icon">▶</span><b>选择原片视频</b><small id="videoName">MP4 / MOV · 每段最多15秒，保留完整原片</small></label>
         <video id="sourcePreview" class="media-preview hidden" controls playsinline preload="metadata"></video>
+        <p id="dynamicMosaicNote" class="hidden">自动检测并打码视频中出现的全部人脸，无需框选或补定位点。预览确认后，再生成仅主要人物为白模的视频。</p>
+        <div id="dynamicTargetField" class="mosaic-setting hidden">
+          <label id="dynamicTargetLabel" for="dynamicTargetDescription">原片中要替换的物品</label>
+          <textarea id="dynamicTargetDescription" rows="3" maxlength="160" aria-describedby="dynamicTargetHelp"></textarea>
+          <small id="dynamicTargetHelp"></small>
+        </div>
       </section>
 
       <section id="prepare" class="panel">
@@ -57,18 +67,25 @@
         <div class="split-prepare-grid">
           <article class="split-action-card local-stage">
             <header><i>1</i><div><b>生成人脸打码视频</b><small>纯本地处理 · 免费</small></div></header>
-            <p>只检测并遮挡原片人物面部。完成后先人工预览打码是否完整，再决定是否提交白膜。</p>
+            <p id="mosaicDescription">只检测并遮挡原片人物面部。完成后先人工预览打码是否完整，再决定是否提交白膜。</p>
+            <div class="mosaic-setting">
+              <label for="faceScoreThreshold">人脸检测阈值（灵敏度）</label>
+              <input id="faceScoreThreshold" type="number" min="0.30" max="0.90" step="0.01" value="0.55" aria-describedby="faceThresholdHelp faceThresholdStatus">
+              <small id="faceThresholdHelp">默认 0.55，范围 0.30–0.90。数值越低越灵敏；漏码可试 0.45，误码较多可调高。调整后点击重新打码，免费复用原片。</small>
+              <small id="faceThresholdStatus" role="status"></small>
+            </div>
             <button id="mosaicBtn" class="primary-button large-action" type="button">生成打码视频</button>
             <small id="mosaicReason" class="button-reason"></small>
           </article>
           <article class="split-action-card paid-stage">
             <header><i>2</i><div><b>生成白膜动作母版</b><small>Seedance 2.0 · 480p</small></div></header>
-            <p>只复用上一步打码视频生成白膜，不再重新打码，也不会在本步提取图片素材。</p>
+            <p id="whiteDescription">只复用上一步打码视频生成白膜，不再重新打码，也不会在本步提取图片素材。</p>
+            <div id="dynamicWhiteControls" class="hidden"><label class="toggle-line"><input id="dynamicMosaicReviewed" type="checkbox"><span>已预览打码：视频中出现的人脸已遮挡，没有明显漏码</span></label><details><summary>主角白模提示词与补充要求</summary><pre id="dynamicWhiteBase"></pre><textarea id="dynamicWhiteExtra" rows="3" maxlength="500" placeholder="可选补充，例如：主角始终是攀岩者，地面保护员保持原貌。"></textarea><small>@视频1 已绑定全部人脸打码视频；白模只转换主要人物，可在补充要求中说明主角。</small></details></div>
             <div class="stage-cost"><span>预计提交</span><b>1 次付费视频任务</b></div>
             <button id="whiteModelBtn" class="primary-button large-action" type="button" disabled>生成白膜视频</button>
             <small id="whiteModelReason" class="button-reason">请先生成并预览打码视频。</small>
           </article>
-          <article class="split-action-card extract-stage">
+          <article id="referenceExtractionStage" class="split-action-card extract-stage">
             <header><i>3</i><div><b>提取人物、服装与场景</b><small>Seedream 5.0</small></div></header>
             <p>白膜完成后再单独提取。已有的原片参考可以上传复用，只对缺失项目产生提取费用。</p>
             <label class="toggle-line"><input id="extractMissing" type="checkbox" checked><span>缺少的原片素材使用 Seedream 5.0 提取</span></label>
@@ -80,13 +97,15 @@
       </section>
 
       <section id="references" class="panel">
-        <div class="panel-heading"><div><span>步骤 04</span><h2>人物、服装与场景参考</h2></div><small id="referenceStepNote">上传已有素材可避免对应的 Seedream 提取费用</small></div>
+        <div class="panel-heading"><div><span>步骤 04</span><h2 id="referenceHeading">人物、服装与场景参考</h2></div><small id="referenceStepNote">上传已有素材可避免对应的 Seedream 提取费用</small></div>
         <div class="reference-grid">
           <label id="originalSceneField" class="image-drop"><input id="originalSceneImage" type="file" accept="image/*"><span>原场景图</span><b>上传原片背景</b><small>缺少时自动提取</small></label>
           <label id="originalClothingField" class="image-drop"><input id="originalClothingImage" type="file" accept="image/*"><span>原服装图</span><b>上传原片服装</b><small>缺少时自动提取</small></label>
           <label id="newSceneField" class="image-drop target-drop hidden"><input id="newSceneImage" type="file" accept="image/*"><span>替换目标</span><b>上传新场景图</b><small>成片只更换场景</small></label>
           <label id="newClothingField" class="image-drop target-drop hidden"><input id="newClothingImage" type="file" accept="image/*"><span>替换目标</span><b>上传新服装图</b><small>成片只更换服装</small></label>
+          <label id="dynamicReplacementField" class="image-drop target-drop hidden"><input id="dynamicReplacementImage" type="file" accept="image/*"><span>绑定 @图片1</span><b>上传替换参考图</b><small>提供目标外观，运动与构图跟随白模视频</small></label>
         </div>
+        <figure id="savedDynamicReference" class="hidden"><img id="savedDynamicImage" alt="已保存的替换参考图"><figcaption>已保存的替换参考图，可直接复用；上传新图可更换。</figcaption></figure>
         <div id="preparedReferences" class="prepared-references hidden">
           <article id="preparedSceneCard" class="hidden"><img id="preparedSceneImage" alt="原场景参考"><b>原场景参考</b></article>
           <article id="preparedClothingCard" class="hidden"><img id="preparedClothingImage" alt="原服装参考"><b>原服装参考</b></article>
@@ -107,14 +126,17 @@
           </article>
         </div>
         <div id="customReferencePicker" class="custom-reference-picker hidden">
-          <div class="custom-reference-heading"><div><span>随心换参考选择</span><h3>三项均可独立保留原片或上传替换</h3></div><small>最终提交顺序固定为：人物、服装、场景</small></div>
+          <div class="custom-reference-heading"><div><span>随心换参考选择</span><h3>人物统一通过角色库，服装与场景可独立替换</h3></div><small>最终提交顺序固定为：角色 Asset、服装、场景</small></div>
           <div class="custom-reference-grid">
             <article class="custom-reference-card">
-              <header><i>人</i><div><b>人物参考</b><small>决定身份、面部、发型与体型</small></div></header>
-              <label class="reference-choice"><input type="radio" name="customPersonChoice" value="original" checked><span>使用原片提取图</span></label>
+              <header><i>人</i><div><b>人物角色</b><small>最终成片只使用已通过审核的火山角色 Asset</small></div></header>
+              <div class="custom-person-paths" role="group" aria-label="人物角色来源">
+                <button type="button" data-custom-person-path="extract"><b>提取原片人物并入库</b><small>先提取预览，再提交审核并选择 Active 角色</small></button>
+                <button type="button" data-custom-person-path="library" class="active"><b>从角色库选择</b><small>直接选择角色库中已有的 Active 人物</small></button>
+                <button type="button" data-custom-person-path="upload"><b>上传新人物并入库</b><small>手动上传人物图，审核通过后选择使用</small></button>
+              </div>
               <div id="customPersonOriginalBox" class="custom-original-preview"><img id="customPersonOriginalPreview" alt="原片人物提取预览"><small>完成步骤 03 后显示</small></div>
-              <label class="reference-choice"><input type="radio" name="customPersonChoice" value="upload"><span>使用自己上传的人物图</span></label>
-              <label id="customPersonUploadField" class="image-drop custom-upload"><input id="customPersonImage" type="file" accept="image/*"><b>上传人物图</b><small>选择后可点击预览</small></label>
+              <div id="customPersonAssetStatus" class="custom-person-asset-status">最终人物：尚未选择 Active 角色</div>
             </article>
             <article class="custom-reference-card">
               <header><i>衣</i><div><b>服装参考</b><small>决定服装、鞋履与明确配饰</small></div></header>
@@ -138,13 +160,14 @@
       </section>
 
       <section id="generate" class="panel generation-panel">
-        <div class="panel-heading"><div><span>步骤 05</span><h2>Seedance 2.5 成片设置</h2></div><small>白膜作为视频参考，三张图片各自只负责一种视觉信息</small></div>
+        <div class="panel-heading"><div><span>步骤 05</span><h2>Seedance 2.5 成片设置</h2></div><small id="generationReferenceNote">白膜作为视频参考，三张图片各自只负责一种视觉信息</small></div>
         <div class="generation-settings">
           <label><span>视频模型</span><input id="model" value="Seedance 2.5" readonly></label>
           <label><span>成片分辨率</span><select id="resolution"><option value="480p">480p · 低成本预览</option><option value="720p" selected>720p · 推荐成片</option></select></label>
-          <label class="audio-setting"><input id="generateAudio" type="checkbox"><span>由 Seedance 生成声音</span></label>
+          <label class="audio-setting"><input id="generateAudio" type="checkbox" checked><span>保留原片声音并同步口型</span></label>
         </div>
-        <details><summary>查看/补充当前模式提示词</summary><textarea id="prompt" rows="8" maxlength="2600"></textarea></details>
+        <div id="dynamicFinalControls" class="hidden"><label class="toggle-line"><input id="dynamicWhiteReviewed" type="checkbox"><span>已预览白模：主角没有服装，画面没有叠加字幕，背景与其他人物保留完整</span></label><p>最终使用以下三项素材，去除原片叠加字幕，不新增文字。</p><div id="dynamicReferences" class="dynamic-reference-chips"></div><small>点击素材标签插入引用，或在下方提示词中输入 @ 选择。人物图可从角色库上传新图并审核后使用。</small></div>
+        <details id="finalPromptDetails"><summary>查看/补充当前模式提示词</summary><pre id="dynamicFinalBase" class="hidden"></pre><div class="dynamic-prompt-editor"><textarea id="prompt" rows="8" maxlength="2600"></textarea><div id="dynamicMentionMenu" class="hidden" role="listbox" aria-label="选择实际提交的素材"></div></div></details>
         <div class="pay-card"><span>预计调用</span><b id="finalCost">1 次 Seedance 2.5 · 720p</b><small>不会重复生成已经完成的白膜与源素材</small></div>
         <button id="generateBtn" class="primary-button large-action" type="button" disabled>按当前模式生成成片</button>
         <p id="generateReason" class="button-reason">请先完成白膜与源素材准备。</p>
@@ -163,10 +186,31 @@
       </section>
     </main>
   </form>
+  <div id="paidConfirmModal" class="workspace-operation-modal" hidden aria-hidden="true">
+    <button id="paidConfirmBackdrop" class="workspace-operation-backdrop" type="button" aria-label="关闭付费确认"></button>
+    <section class="workspace-operation-panel" role="dialog" aria-modal="true" aria-labelledby="paidConfirmTitle">
+      <form id="paidConfirmForm">
+        <header>
+          <span>PAID TASK CONFIRMATION</span>
+          <h3 id="paidConfirmTitle">确认提交付费任务</h3>
+          <p>确认后才会向火山方舟提交任务；取消不会产生费用。</p>
+        </header>
+        <ul id="paidConfirmLines" class="paid-confirm-lines"></ul>
+        <footer>
+          <button id="paidConfirmCancel" type="button">取消</button>
+          <button id="paidConfirmSubmit" type="submit">确认并提交</button>
+        </footer>
+      </form>
+    </section>
+  </div>
   <div id="toast" class="toast" role="status"></div>
   <script src="/static/workflow_common.js?v=20260825-1" defer></script>
   <script src="/static/upload_preview.js?v=20260808-1" defer></script>
-  <script src="/static/character_library.js?v=20260902-1" defer></script>
-  <script src="/static/wardrobe.js?v=20260903-1" defer></script>
-</body>
+  <script src="/static/character_library.js?v=20260915-upload4" defer></script>
+  <script src="/static/inline_cast.js?v=20260915-clothing7" defer></script>
+  <script src="/static/wardrobe_audio.js?v=20260915-audio1" defer></script>
+  <script src="/static/wardrobe_object.js?v=20260915-audio1" defer></script>
+  <script src="/static/wardrobe_segments.js?v=20260915-timing1" defer></script>
+  <script src="/static/wardrobe.js?v=20260915-audio1" defer></script>
+<script src="/static/cast_entry.js?v=20260915-colors2" defer></script></body>
 </html>

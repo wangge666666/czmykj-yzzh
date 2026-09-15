@@ -1107,6 +1107,35 @@ def build_multi_seedance_payload(
     }
 
 
+def build_motion_reference_payload(
+    *, prompt: str, image_sources: list[str], video_reference: str,
+    model: str = DEFAULT_SEEDANCE_25_MODEL, resolution: str = "720p",
+    ratio: str = "adaptive", duration: int = -1,
+    generate_audio: bool = False, watermark: bool = False,
+) -> dict[str, Any]:
+    """Ordered image references plus motion video; frame guides use reference images.
+
+    This deliberately does not mix native first/last-frame roles with video
+    reference mode. Frame composition is requested through the prompt.
+    """
+    if not prompt.strip() or len(prompt) > 2000:
+        raise WorkflowError("提示词不能为空，且不能超过 2000 字。")
+    if not 1 <= len(image_sources) <= 9 or any(not str(s).strip() for s in image_sources):
+        raise WorkflowError("人物动作迁移需要 1–9 张有效参考图片。")
+    if resolution not in {"480p", "720p"}:
+        raise WorkflowError("人物动作迁移支持 480p 或 720p。")
+    validate_seedance_output_parameters(model=model, ratio=ratio, duration=duration)
+    validate_image_payload_size(image_sources)
+    return {
+        "model": model, "resolution": resolution, "ratio": ratio, "duration": duration,
+        "generate_audio": bool(generate_audio), "watermark": bool(watermark),
+        "content": [{"type": "text", "text": prompt.strip()}] + [
+            {"type": "image_url", "image_url": {"url": image_to_data_url(s)}, "role": "reference_image"}
+            for s in image_sources
+        ] + [{"type": "video_url", "video_url": {"url": validate_video_reference(video_reference)}, "role": "reference_video"}],
+    }
+
+
 class ArkVideoClient:
     def __init__(
         self,
@@ -1664,11 +1693,11 @@ class ArkAssetsClient:
 
 
 class TosMediaStore:
-    def __init__(self) -> None:
+    def __init__(self, *, bucket: str | None = None) -> None:
         required = {
             "TOS_ACCESS_KEY": os.getenv("TOS_ACCESS_KEY", "").strip(),
             "TOS_SECRET_KEY": os.getenv("TOS_SECRET_KEY", "").strip(),
-            "TOS_BUCKET": os.getenv("TOS_BUCKET", "").strip(),
+            "TOS_BUCKET": (bucket if bucket is not None else os.getenv("TOS_BUCKET", "")).strip(),
         }
         missing = [key for key, value in required.items() if not value]
         if missing:

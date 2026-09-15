@@ -1,0 +1,88 @@
+// Upload integration uses mocked HTTP only: no cloud uploads or video generation.
+const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
+const dynamic = require('./wardrobe_dynamic_ui.cjs');
+const object = require('./wardrobe_object_ui.cjs');
+const rewrite = require('./wardrobe_continuation_ui.cjs');
+const read = file => fs.readFileSync(path.join(__dirname, '../web', file), 'utf8');
+async function run(t) {
+  const {w, $} = t, q = selector => w.document.querySelector(selector);
+  let failure = false, serial = 0, pickerClicks = 0, chosenFiles = [];
+  const uploads = [], assets = [1, 2].map(n => ({id:`asset-person00000${n}`, uri:`asset://asset-person00000${n}`, name:`人物${n}`, url:`https://example.test/${n}.png`, status:'Active', asset_type:'Image', group_id:'group-images123'}));
+  const originalFetch = w.fetch;
+  w.HTMLElement.prototype.scrollIntoView = function() {};
+  w.fetch = async (url, opts = {}) => {
+    if (url.startsWith('/api/character-library?')) return {ok:true, json:async()=>({configured:true, groups:[{id:'group-images123', name:'原人物组', group_type:'AIGC'}, {id:'group-another123', name:'其他组', group_type:'AIGC'}], assets})};
+    if (url === '/api/character-library/assets') {
+      uploads.push(opts.body);
+      if (failure) return {ok:false, json:async()=>({error:'素材组容量不足，请选择其他素材组。'})};
+      const id = `asset-upload0000${++serial}`;
+      assets.push({id, uri:`asset://${id}`, name:opts.body.get('name'), url:`https://example.test/${id}.png`, status:'Processing', asset_type:'Image', group_id:opts.body.get('group_id')});
+      return {ok:true, json:async()=>({uri:`asset://${id}`, status:'Processing'})};
+    }
+    if (url === '/api/inline-cast/prompt-preview') return {ok:true, json:async()=>({count:2, image_count:4, final_prompt:'多人映射', white_prompt:'分色母版'})};
+    return originalFetch(url, opts);
+  };
+  w.eval(read('upload_preview.js')); w.eval(read('character_library.js')); w.eval(read('inline_cast.js'));
+  await dynamic.tick();
+  w.document.dispatchEvent(new w.Event('inline-cast-change'));
+  const fileInput = q('[data-character-upload-file]');
+  Object.defineProperty(fileInput, 'files', {get:()=>chosenFiles, configurable:true});
+  Object.defineProperty(fileInput, 'value', {get:()=>chosenFiles[0]?.name || '', set:()=>{chosenFiles=[];}, configurable:true});
+  fileInput.addEventListener('click', event=>{event.preventDefault();pickerClicks++;});
+  const file = name => {chosenFiles=[new w.File(['image'], name, {type:'image/png'})];fileInput.dispatchEvent(new w.Event('change', {bubbles:true}));};
+  const card = n => w.document.querySelectorAll('.inline-cast article')[n];
+  const select = uri => q(`[data-character-select="${uri}"]`).click();
+  const submit = () => q('[data-character-upload]').click();
+  select(assets[0].uri);
+  card(0).querySelector('[data-cast-upload]').click();
+  assert.equal(pickerClicks, 1, 'the person-card upload button must really open the file picker');
+  q('[data-character-pick]').click();assert.equal(pickerClicks, 2);
+  assert.match(q('[data-character-upload]').textContent, /上传素材并用于人物1/);
+  assert.equal(q('[data-character-upload-pane]').classList.contains('hidden'), false);
+  submit();assert.match(q('[data-character-upload-status]').textContent, /选择电脑中的新人物图片/);
+  assert.equal(uploads.length, 0);
+  file('全新人物.png');
+  assert.match(q('[data-character-file-area] .upload-file-preview img').src, /^blob:/);
+  assert.match(q('[data-character-file-name]').textContent, /全新人物.png/);
+  assert.equal(q('[data-character-upload-name]').value, '全新人物');
+  assert.equal(q('[data-character-upload-group]').value, 'group-images123');
+  submit();assert.match(q('[data-character-upload-status]').textContent, /授权确认/);
+  q('[data-character-consent]').checked = true;
+  submit();submit();await dynamic.tick();
+  assert.equal(uploads.length, 1, 'double click must not upload duplicate assets');
+  assert.equal(uploads[0].get('asset_file').name, '全新人物.png');
+  assert.equal(uploads[0].get('group_id'), 'group-images123');
+  assert.match(q('[data-character-upload-status]').textContent, /已上传.*审核/);
+  assert.match(w.DepthFlowInlineCast.problem(), /正在审核/);
+  assert.equal($('personAsset').value, assets[0].uri, 'unapproved uploads cannot be used');
+  q('[data-cast-add]').click();select(assets[1].uri);
+  assets[2].status='Active';await w.DepthFlowCharacterLibrary.refresh();
+  assert.equal($('personAsset').value, assets[2].uri, 'approved upload must bind to its original person, even after switching cards');
+  assert.match(card(0).querySelector('[data-cast-person-preview]').src, /asset-upload00001/);
+  assert.match(card(1).querySelector('[data-cast-person-preview]').src, /2.png/);
+  assert.equal(w.DepthFlowInlineCast.problem(), '');
+  card(1).querySelector('[data-cast-upload]').click();file('另一个新人物.png');
+  failure=true;submit();await dynamic.tick();
+  assert.match(q('[data-character-upload-status]').textContent, /容量不足/);
+  assert.equal(fileInput.files[0].name, '另一个新人物.png', 'failed uploads retain the chosen file');
+  assert.equal(q('[data-character-upload]').disabled, false);
+  assert.equal(w.DepthFlowInlineCast.problem(), '');
+  failure=false;submit();await dynamic.tick();
+  assets[3].status='Active';await w.DepthFlowCharacterLibrary.refresh();
+  const form = new w.FormData();w.DepthFlowInlineCast.append(form);
+  assert.equal(JSON.parse(form.get('additional_people'))[0].uri, assets[3].uri, 'the uploaded second identity must reach generation FormData');
+  assert.equal($('personAsset').value, assets[2].uri);
+  card(1).querySelector('[data-cast-upload]').click();file('不要覆盖新选择.png');submit();await dynamic.tick();
+  card(1).querySelector('[data-cast-choose]').click();select(assets[1].uri);
+  assets[4].status='Active';await w.DepthFlowCharacterLibrary.refresh();
+  const updated = new w.FormData();w.DepthFlowInlineCast.append(updated);
+  assert.equal(JSON.parse(updated.get('additional_people'))[0].uri, assets[1].uri, 'late approval cannot overwrite an explicit new selection');
+  t.close();
+}
+(async()=>{
+  const d=dynamic.setup({restore:true});await dynamic.tick();await run(d);
+  await run(await object.setup({restore:true, mode:'dynamic_object', workflow:'references'}));
+  await run(await object.setup({restore:true, mode:'dynamic_scene', workflow:'references'}));
+  await run(await rewrite.setup({workflow:'references'}));
+  console.log('Character upload: local picker, image preview, validation, multipart upload, duplicate guard, review and per-person auto binding passed in four workflows.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

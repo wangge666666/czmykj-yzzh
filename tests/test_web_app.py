@@ -36,14 +36,33 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('href="/projects/wardrobe"', html)
         self.assertNotIn('href="/projects/person"', html)
         self.assertNotIn('href="/projects/scene"', html)
-        self.assertIn("2</b> 个能力组", html)
-        self.assertIn("3</b> 个独立项目", html)
+        self.assertIn("3</b> 个能力组", html)
+        self.assertIn("4</b> 个独立项目", html)
+        self.assertIn('href="/projects/motion-transfer"', html)
+        self.assertNotIn('href="/projects/shop-dance"', html)
         self.assertNotIn('href="/projects/clothing"', html)
         self.assertIn('href="/projects/long-video"', html)
         self.assertIn('href="/projects/real-long-video"', html)
         self.assertIn("火山角色库", html)
         self.assertNotIn("真人素材先生成眼部隐私遮挡图", html)
         response.close()
+
+    def test_removed_shop_dance_feature_is_unavailable(self) -> None:
+        for path in (
+            "/projects/shop-dance",
+            "/api/shop-dance/latest",
+            "/api/shop-dance/jobs/archived-job",
+            "/api/shop-dance/jobs/archived-job/files/white_model",
+            "/api/shop-dance/jobs/archived-job/download.zip",
+            "/static/shop_dance.html",
+            "/static/shop_dance.js",
+            "/static/shop_dance.css",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 404)
+        for action in ("mosaic", "white-model", "generate", "recover"):
+            with self.subTest(action=action):
+                self.assertEqual(self.client.post(f"/api/shop-dance/{action}").status_code, 404)
 
     def test_healthz_is_available_without_site_login(self) -> None:
         with patch.dict("os.environ", {"DEPTHFLOW_SITE_USER": "demo", "DEPTHFLOW_SITE_PASSWORD": "secret"}, clear=False):
@@ -95,18 +114,14 @@ class WebAppTests(unittest.TestCase):
 
     def test_person_only_route_has_scene_and_final_previews(self) -> None:
         response = self.client.get("/projects/person")
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/projects/wardrobe#person")
+        response.close()
+        response = self.client.get("/projects/person", follow_redirects=True)
         html = response.get_data(as_text=True)
-        self.assertIn("只更换人物", html)
-        self.assertIn('id="prepareBtn"', html)
-        self.assertIn('id="generateBtn"', html)
-        self.assertIn('id="fullBtn"', html)
-        self.assertIn('id="retrySceneBtn"', html)
-        self.assertIn('id="recoverSeedanceBtn"', html)
-        self.assertIn('id="depthResultVideo"', html)
-        self.assertIn('id="sceneResultImage"', html)
-        self.assertIn('id="finalResultVideo"', html)
-        self.assertIn('/static/person.js', html)
+        self.assertIn('id="whiteVideo"', html)
+        self.assertIn('id="outputVideo"', html)
+        self.assertIn('/static/inline_cast.js?', html)
         response.close()
 
     def test_person_only_prompt_maps_depth_person_clothes_and_original_scene(self) -> None:
@@ -121,16 +136,16 @@ class WebAppTests(unittest.TestCase):
     def test_partial_replacement_pages_share_ark_character_library(self) -> None:
         for route in ("/projects/person", "/projects/scene", "/projects/clothing"):
             with self.subTest(route=route):
-                response = self.client.get(route)
+                response = self.client.get(route, follow_redirects=True)
                 self.assertEqual(response.status_code, 200)
-                self.assertIn('/static/character_library.js?v=20260824-1', response.get_data(as_text=True))
+                self.assertIn('/static/character_library.js?v=20260915-upload4', response.get_data(as_text=True))
                 response.close()
         script_response = self.client.get("/static/character_library.js")
         script = script_response.get_data(as_text=True)
         self.assertIn("审核并上传角色库", script)
         self.assertIn("data-character-select", script)
         self.assertIn("data-character-delete-confirmed", script)
-        self.assertIn('request("/api/character-library")', script)
+        self.assertIn('/api/character-library?', script)
         self.assertIn('personAssetInput.name = "person_asset"', script)
         self.assertNotIn("window.prompt", script)
         self.assertNotIn("window.confirm", script)
@@ -164,20 +179,14 @@ class WebAppTests(unittest.TestCase):
 
     def test_scene_only_route_has_extraction_and_five_previews(self) -> None:
         response = self.client.get("/projects/scene")
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/projects/wardrobe#scene")
+        response.close()
+        response = self.client.get("/projects/scene", follow_redirects=True)
         html = response.get_data(as_text=True)
-        self.assertIn("只更换场景", html)
-        self.assertIn('id="prepareBtn"', html)
-        self.assertIn('id="generateBtn"', html)
-        self.assertIn('id="fullBtn"', html)
-        self.assertIn('id="personResultImage"', html)
-        self.assertIn('id="clothingResultImage"', html)
-        self.assertIn('id="sceneResultImage"', html)
-        self.assertIn('id="finalResultVideo"', html)
-        self.assertIn("固定 16:9 · 2560×1440", html)
-        self.assertIn("白底纯服装三视图", html)
-        self.assertIn("无模特 · 无人台 · 无玩偶", html)
-        self.assertIn('/static/scene.js', html)
+        self.assertIn('id="whiteVideo"', html)
+        self.assertIn('id="outputVideo"', html)
+        self.assertIn('/static/inline_cast.js?', html)
         response.close()
 
     def test_scene_only_prompt_preserves_subject_and_replaces_only_background(self) -> None:
@@ -191,19 +200,14 @@ class WebAppTests(unittest.TestCase):
 
     def test_clothing_only_route_has_two_extractions_and_five_previews(self) -> None:
         response = self.client.get("/projects/clothing")
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/projects/wardrobe#clothing")
+        response.close()
+        response = self.client.get("/projects/clothing", follow_redirects=True)
         html = response.get_data(as_text=True)
-        self.assertIn("只更换服装", html)
-        self.assertIn('id="prepareBtn"', html)
-        self.assertIn('id="generateBtn"', html)
-        self.assertIn('id="fullBtn"', html)
-        self.assertIn('id="personResultImage"', html)
-        self.assertIn('id="clothingResultImage"', html)
-        self.assertIn('id="sceneResultImage"', html)
-        self.assertIn('id="finalResultVideo"', html)
-        self.assertIn("白色底衫人物三视图", html)
-        self.assertIn("@图片2是唯一服装依据", html)
-        self.assertIn('/static/clothing.js', html)
+        self.assertIn('id="whiteVideo"', html)
+        self.assertIn('id="outputVideo"', html)
+        self.assertIn('/static/inline_cast.js?', html)
         response.close()
 
     def test_clothing_only_prompt_replaces_only_wardrobe(self) -> None:
@@ -262,7 +266,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="confirmCast"', html)
         self.assertIn("0人重绘新场景；1人走单人流程；2–4人自动走多人流程", html)
         self.assertIn('/static/long_video.js', html)
-        self.assertIn('long_video.js?v=20260814-06', html)
+        self.assertIn('long_video.js?v=20260914-multi1', html)
         self.assertIn('long_video.css?v=20260812-02', html)
         self.assertIn('id="downloadCenter"', html)
         self.assertIn('id="whiteShotDownloadList"', html)
@@ -291,7 +295,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="realPersonAuthorized"', html)
         self.assertIn('id="prepareRealActorsBtn"', html)
         self.assertNotIn('id="sketchPrompt"', html)
-        self.assertIn('/static/real_long_video.js?v=20260823-02', html)
+        self.assertRegex(html, r'src="/static/real_long_video\.js\?v=[^"]+"')
         self.assertIn('<select id="resolution"><option>480p</option><option selected>720p</option><option>1080p</option>', html)
         self.assertIn('value="doubao-seedance-2-5-260628">Seedance 2.5', html)
         self.assertIn('id="ratioHint"', html)
@@ -348,7 +352,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("处理分镜 ${String(pendingCompositionShots[0])", script)
         self.assertNotIn("generationBlocked || compositionApprovalBlocked", script)
         real_script.close()
-        self.assertNotIn('/static/long_video.js?v=20260814-06', html)
+        self.assertNotIn('/static/long_video.js?', html)
         response.close()
 
     def test_real_character_library_creates_aigc_group_and_manages_it(self) -> None:
@@ -399,6 +403,30 @@ class WebAppTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.get_json()["status"], "pending")
+
+    def test_shared_character_upload_accepts_new_local_picture(self) -> None:
+        assets = Mock()
+        assets.create_asset.return_value = "asset-newpicture123"
+        source = Mock(url="https://example.test/temporary-picture", channel="test")
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(web_app, "ark_assets_configured", return_value=True),
+            patch.object(web_app, "ark_assets_client", return_value=assets),
+            patch.object(web_app, "timestamped_run_dir", return_value=Path(temporary)),
+            patch.object(web_app, "prepare_ark_character_upload_source", return_value=source) as prepare,
+            patch.object(web_app.threading, "Thread"),
+        ):
+            response = self.client.post("/api/character-library/assets", data={
+                "group_id": "group-newpeople123", "name": "全新人物",
+                "asset_file": (io.BytesIO(b"new-local-picture"), "new-person.png"),
+            })
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(response.get_json()["uri"], "asset://asset-newpicture123")
+            self.assertEqual(response.get_json()["status"], "Processing")
+            self.assertEqual(prepare.call_args.args[0].read_bytes(), b"new-local-picture")
+            assets.create_asset.assert_called_once_with(
+                group_id="group-newpeople123", url=source.url, name="全新人物", asset_type="Image",
+            )
 
     def test_real_actor_upload_binds_active_character_asset_as_only_identity(self) -> None:
         runs_dir = web_app.PROJECT_DIR / "runs"
@@ -1126,7 +1154,7 @@ class WebAppTests(unittest.TestCase):
             "/projects/long-video",
         ):
             with self.subTest(path=path):
-                response = self.client.get(path)
+                response = self.client.get(path, follow_redirects=True)
                 self.assertEqual(response.status_code, 200)
                 self.assertIn('/static/upload_preview.js?v=20260808-1', response.get_data(as_text=True))
                 response.close()
@@ -3458,6 +3486,16 @@ class WebAppTests(unittest.TestCase):
 
             def finish_generation(sub_job: web_app.WebJob, **kwargs: object) -> None:
                 self.assertEqual(kwargs["options"]["ratio"], "9:16")
+                self.assertIn(
+                    web_app.REAL_PERSON_SAFE_WHITE_MODEL_PROMPT,
+                    kwargs["options"]["prompt"],
+                )
+                self.assertEqual(kwargs["options"]["reference_upload_strategy"], "stable")
+                self.assertEqual(
+                    kwargs["options"]["reference_upload_context"],
+                    "真实人物复刻重绘白膜",
+                )
+                self.assertTrue(kwargs["options"]["verify_tos_public"])
                 output = sub_job.run_dir / "new-white.mp4"
                 output.write_bytes(b"new-white")
                 sub_job.update(status="succeeded", output_path=output, task_id="white-ratio-task")
@@ -3494,6 +3532,68 @@ class WebAppTests(unittest.TestCase):
             mock_generate.assert_called_once()
             self.assertEqual(job.status, "succeeded")
             self.assertTrue(any("自动跟随原片：9:16" in message for message in job.logs))
+
+    def test_real_white_model_network_failure_resets_running_shot_to_retryable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            source = directory / "source.mp4"
+            mosaic = directory / "face_mosaic.mp4"
+            source.write_bytes(b"source")
+            mosaic.write_bytes(b"mosaic")
+            job = web_app.WebJob(
+                id="real-white-network-failure",
+                kind="real_long_white_model",
+                project=web_app.REAL_PERSON_LONG_PROJECT,
+                run_dir=directory,
+                shots=[{
+                    "index": 1,
+                    "duration": 4.0,
+                    "source_path": str(source),
+                    "mosaic_path": str(mosaic),
+                    "mosaic_reviewed": True,
+                    "suggested_actor_count": 1,
+                }],
+            )
+
+            def fail_before_submit(sub_job: web_app.WebJob, **_kwargs: object) -> None:
+                sub_job.update(
+                    status="failed",
+                    error="tempfile.org connection timed out",
+                    task_id="",
+                )
+
+            try:
+                with (
+                    patch(
+                        "web_app.inspect_video",
+                        return_value=SimpleNamespace(duration=4.0, width=1080, height=1920),
+                    ),
+                    patch("web_app.run_generation", side_effect=fail_before_submit),
+                    patch("web_app._persist_long_job"),
+                ):
+                    web_app.run_long_white_model_generation(
+                        job,
+                        options={
+                            "model": web_app.DEFAULT_SEEDANCE_MODEL,
+                            "resolution": "480p",
+                            "ratio": "adaptive",
+                            "generate_audio": False,
+                            "watermark": False,
+                            "delete_tos_after": True,
+                        },
+                    )
+            finally:
+                with web_app.JOBS_LOCK:
+                    web_app.JOBS.pop("real-white-network-failure-w01q1", None)
+
+            self.assertEqual(job.status, "failed")
+            self.assertEqual(job.shots[0]["status"], "retryable")
+            self.assertEqual(
+                job.shots[0]["stage"],
+                "网络失败：未提交、未计费，可以安全重试",
+            )
+            self.assertFalse(job.shots[0]["submitted"])
+            self.assertEqual(job.shots[0]["white_model_total_generation_count"], 0)
 
     def test_white_model_quality_gate_rejects_aspect_ratio_mismatch(self) -> None:
         source = Path("source.mp4")
@@ -4468,6 +4568,145 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("标准绿幕 #00B140", prompt)
         self.assertIn("严禁出现或保留任何字幕", prompt)
         self.assertIn("台词只表现为嘴部动作", prompt)
+
+    def test_real_person_white_model_prompt_is_separate_and_identity_free(self) -> None:
+        prompt = web_app.REAL_PERSON_SAFE_WHITE_MODEL_PROMPT
+        self.assertNotEqual(prompt, web_app.DEFAULT_WHITE_MODEL_PROMPT)
+        self.assertIn("无五官", prompt)
+        self.assertIn("光滑椭圆体", prompt)
+        self.assertIn("抽象几何形变", prompt)
+        self.assertIn("人物大小", prompt)
+        self.assertIn("机位", prompt)
+        self.assertIn("景别", prompt)
+        self.assertIn("构图", prompt)
+        self.assertIn("运镜轨迹", prompt)
+        for risky_word in ("素体", "解剖", "裸露", "皮肤", "眼窝", "鼻梁"):
+            self.assertNotIn(risky_word, prompt)
+
+    def test_real_white_model_failure_state_distinguishes_upload_and_review(self) -> None:
+        network = web_app.real_white_model_failure_state("tempfile.org connection timed out")
+        self.assertEqual(network["status"], "retryable")
+        self.assertTrue(network["retryable"])
+        self.assertIn("未提交、未计费，可以安全重试", network["error"])
+
+        review = web_app.real_white_model_failure_state(
+            "output video may contain sensitive information",
+            task_id="cgt-submitted",
+        )
+        self.assertEqual(review["status"], "failed")
+        self.assertFalse(review["retryable"])
+        self.assertIn("已经提交", review["error"])
+        self.assertIn("禁止使用相同打码视频和相同提示词原样重试", review["error"])
+
+        review_without_task_id = web_app.real_white_model_failure_state(
+            "InputImageSensitiveContentDetected"
+        )
+        self.assertEqual(review_without_task_id["stage"], "审核失败：已提交，禁止原样重试")
+        self.assertFalse(review_without_task_id["retryable"])
+
+    def test_real_stable_tos_reference_is_verified_before_use(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "real-white.mp4"
+            source.write_bytes(b"video")
+            tos = Mock()
+            tos.upload_video.return_value = Mock(
+                signed_url="https://tos.example/real-white.mp4",
+                object_key="seedance-inputs/real-white.mp4",
+            )
+            tos_factory = Mock(return_value=tos)
+            tos_factory.configured.return_value = True
+            verifier = Mock()
+            with (
+                patch.object(web_app, "TosMediaStore", tos_factory),
+                patch.object(web_app, "TempFileMediaStore", return_value=verifier),
+            ):
+                reference = web_app.prepare_seedance_stable_video_reference(
+                    source,
+                    context_label="真实人物复刻重绘白膜",
+                    verify_tos_public=True,
+                )
+
+            verifier._verify_public_video.assert_called_once_with(
+                "https://tos.example/real-white.mp4",
+                expected_size=5,
+            )
+            self.assertEqual(reference.channel, "tos")
+            reference.close(delete_remote=True)
+
+    def test_real_stable_reference_reports_missing_tos_bucket_then_uses_tunnel(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "real-white.mp4"
+            source.write_bytes(b"video")
+            logs: list[str] = []
+            video_server = Mock(local_origin="http://127.0.0.1:45678")
+            video_server.route_path = "/media/token/real-white.mp4"
+            tunnel = Mock()
+            tunnel.start.return_value = "https://real-white.trycloudflare.com"
+            tos_factory = Mock()
+            tos_factory.configured.return_value = False
+            with (
+                patch.dict(
+                    web_app.os.environ,
+                    {
+                        "TOS_ACCESS_KEY": "configured",
+                        "TOS_SECRET_KEY": "configured",
+                        "TOS_BUCKET": "",
+                    },
+                ),
+                patch.object(web_app, "TosMediaStore", tos_factory),
+                patch.object(web_app, "TemporaryVideoServer", return_value=video_server),
+                patch.object(web_app, "TemporaryPublicTunnel", return_value=tunnel),
+            ):
+                reference = web_app.prepare_seedance_stable_video_reference(
+                    source,
+                    on_log=logs.append,
+                    context_label="真实人物复刻重绘白膜",
+                    verify_tos_public=True,
+                )
+
+            self.assertEqual(reference.channel, "project_tunnel")
+            self.assertTrue(any("TOS_BUCKET 未配置" in message for message in logs))
+            tunnel.wait_until_reachable.assert_called_once_with(reference.url)
+            reference.close()
+
+    def test_real_single_white_retry_allows_selected_failed_shot_without_output(self) -> None:
+        job = web_app.WebJob(
+            id="retry-missing-real-white",
+            kind="real_long_white_model",
+            project=web_app.REAL_PERSON_LONG_PROJECT,
+            run_dir=Path("."),
+            shots=[{"index": 1, "status": "retryable", "white_model_path": ""}],
+        )
+        with web_app.app.test_request_context(
+            "/api/real-long-video/white-model",
+            method="POST",
+            data={
+                "white_regeneration_mode": "selected",
+                "force_white_shots": "[1]",
+            },
+        ):
+            mode, indices = web_app.parse_long_white_model_regeneration_request(job)
+        self.assertEqual(mode, "selected")
+        self.assertEqual(indices, {1})
+
+    def test_real_white_model_paid_count_ignores_pre_submit_network_attempts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            shot_dir = Path(temp_dir)
+            source = shot_dir / "source.mp4"
+            source.write_bytes(b"video")
+            for sequence, task_id in ((1, "cgt-paid"), (2, ""), (3, "")):
+                attempt = shot_dir / "white_model_task" / f"attempt_{sequence}"
+                attempt.mkdir(parents=True)
+                (attempt / "job.json").write_text(
+                    json.dumps({"task_id": task_id}),
+                    encoding="utf-8",
+                )
+            shot = {
+                "source_path": str(source),
+                "white_model_total_generation_count": 3,
+            }
+            self.assertEqual(web_app.real_long_white_model_paid_generation_count(shot), 1)
+            self.assertEqual(web_app.real_long_white_model_attempt_count(shot), 3)
 
     @patch("web_app.resume_cloud_job")
     def test_long_shot_reuses_matching_succeeded_cloud_task_without_resubmitting(
