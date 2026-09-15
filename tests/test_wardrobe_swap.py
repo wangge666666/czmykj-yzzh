@@ -36,7 +36,11 @@ class WardrobeSwapTests(unittest.TestCase):
         self.assertIn('data-mode="clothing"', html)
         self.assertIn('data-mode="custom"', html)
         self.assertIn('id="customReferencePicker"', html)
-        self.assertIn('name="customPersonChoice"', html)
+        self.assertNotIn('name="customPersonChoice"', html)
+        self.assertIn('data-custom-person-path="extract"', html)
+        self.assertIn('data-custom-person-path="library"', html)
+        self.assertIn('data-custom-person-path="upload"', html)
+        self.assertIn('id="customPersonAssetStatus"', html)
         self.assertIn('name="customClothingChoice"', html)
         self.assertIn('name="customSceneChoice"', html)
         self.assertIn("打码、白膜与素材提取", html)
@@ -47,8 +51,11 @@ class WardrobeSwapTests(unittest.TestCase):
         self.assertIn("Seedance 2.5", html)
         self.assertIn('id="resolution"', html)
         self.assertIn("/static/character_library.js", html)
-        self.assertIn("character_library.js?v=20260902-1", html)
-        self.assertIn("/static/wardrobe.js?v=20260903-1", html)
+        self.assertIn("character_library.js?v=20260915-sync1", html)
+        self.assertIn("cast_entry.js?v=20260915-colors2", html)
+        self.assertIn("/static/wardrobe.js?v=20260915-sync1", html)
+        self.assertIn('id="paidConfirmModal"', html)
+        self.assertIn('id="paidConfirmSubmit"', html)
         self.assertIn("原片人物三视图（白 T 短裤）", html)
         self.assertIn('id="preparedPersonImage"', html)
         self.assertIn('id="submitPreparedPerson"', html)
@@ -72,7 +79,9 @@ class WardrobeSwapTests(unittest.TestCase):
         self.assertIn("terminalNoticeKeys: new Set()", script)
         self.assertIn("if (restoring) state.terminalNoticeKeys.add(terminalNoticeKey)", script)
         self.assertIn("历史任务", script)
-        self.assertIn("window.confirm", script)
+        self.assertNotIn("window.confirm", script)
+        self.assertIn("paidConfirmResolver", script)
+        self.assertIn('$("#paidConfirmForm").addEventListener("submit"', script)
         self.assertIn("job.person_revision", script)
         self.assertIn("job.person_reference_current", script)
         self.assertIn("旧版需按白 T 短裤规则重绘", script)
@@ -235,6 +244,8 @@ class WardrobeSwapTests(unittest.TestCase):
         self.assertIn("用户最终选定的唯一人物", custom)
         self.assertIn("用户最终选定的唯一服装", custom)
         self.assertIn("用户最终选定的唯一场景", custom)
+        self.assertIn("Active 人物 Asset", custom)
+        self.assertIn("不得从本地真人原图或原片提取图直接读取", custom)
 
     def test_wardrobe_person_triview_uses_white_tshirt_and_shorts(self) -> None:
         prompt = web_app.WARDROBE_NEUTRAL_PERSON_TRIVIEW_PROMPT
@@ -245,31 +256,16 @@ class WardrobeSwapTests(unittest.TestCase):
         self.assertIn("绝对禁止保留", constraint)
         self.assertNotIn("原始服装一致", prompt)
 
-    @patch("web_app.conform_video_duration")
-    @patch("web_app.inspect_video")
-    def test_source_over_15_seconds_is_trimmed_before_all_processing(
-        self, mock_inspect: Mock, mock_conform: Mock
-    ) -> None:
+    @patch("web_app.wardrobe_segments.prepare")
+    @patch("web_app.inspect_video", return_value=Mock(duration=29))
+    def test_long_source_is_sent_to_complete_segmentation(self, mock_inspect, split):
         with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            source = root / "source.mp4"
-            clipped = root / "reference_first_15s.mp4"
-            source.write_bytes(b"source")
-            clipped.write_bytes(b"clipped")
-            mock_inspect.side_effect = [Mock(duration=21.4), Mock(duration=15.0)]
-            mock_conform.return_value = clipped
-            job = web_app.WebJob(id="trim", kind="wardrobe_prepare_person", run_dir=root)
-
-            result = web_app.normalize_wardrobe_source_duration(job, source)
-
-            self.assertEqual(result, clipped)
-            mock_conform.assert_called_once_with(
-                source,
-                root / "reference_first_15s.mp4",
-                web_app.WARDROBE_MAX_SOURCE_SECONDS,
-                with_audio=False,
-            )
-            self.assertTrue(any("后续打码、白膜、素材提取和成片" in line for line in job.logs))
+            root=Path(temp_dir);source=root/'reference.mp4';source.write_bytes(b'full original')
+            job=web_app.WebJob(id='segment-source',kind='wardrobe_prepare_dynamic',run_dir=root)
+            split.return_value=root/'segment_01.mp4'
+            self.assertEqual(web_app.normalize_wardrobe_source_duration(job,source),split.return_value)
+            self.assertEqual(split.call_args.args[2:],(source,29,15.0))
+            self.assertEqual(source.read_bytes(),b'full original')
 
     @patch("web_app.conform_video_duration")
     @patch("web_app.inspect_video")
@@ -296,9 +292,8 @@ class WardrobeSwapTests(unittest.TestCase):
         self.assertEqual(options["duration"], 6)
         self.assertFalse(options["generate_audio"])
         self.assertEqual(options["reference_upload_strategy"], "stable")
-        self.assertIn("结束姿势定格", options["prompt"])
-        self.assertIn("非写实的纯白三维动画人偶", options["prompt"])
-        self.assertIn("宽松、不透明的纯白长袖长裤连体工作服", options["prompt"])
+        self.assertIn("纯黑静音补时区间", options["prompt"])
+        self.assertIn("工业动画动作人台", options["prompt"])
         self.assertNotIn("裸露感", options["prompt"])
         self.assertNotIn("解剖细节", options["prompt"])
         self.assertNotEqual(options["prompt"], web_app.DEFAULT_WHITE_MODEL_PROMPT)
@@ -532,7 +527,7 @@ class WardrobeSwapTests(unittest.TestCase):
                     web_app.JOBS.pop(source.id, None)
 
     @patch("web_app.threading.Thread")
-    def test_custom_prepare_always_accepts_source_and_extracts_all_references(self, mock_thread: Mock) -> None:
+    def test_custom_prepare_accepts_explicit_original_person_extraction(self, mock_thread: Mock) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch(
             "web_app.timestamped_run_dir", return_value=Path(temp_dir)
         ):
@@ -541,8 +536,7 @@ class WardrobeSwapTests(unittest.TestCase):
                 data={
                     "mode": "custom",
                     "reference_video": (io.BytesIO(b"video"), "source.mp4"),
-                    # Even an old UI submitting false cannot disable the mandatory
-                    # three-way source extraction of 随心换.
+                    "custom_person_source": "extract",
                     "extract_missing": "false",
                 },
                 content_type="multipart/form-data",
@@ -611,7 +605,7 @@ class WardrobeSwapTests(unittest.TestCase):
                     web_app.JOBS.pop(source.id, None)
 
     @patch("web_app.threading.Thread")
-    def test_custom_generation_can_use_three_original_extractions_without_role_asset(
+    def test_custom_generation_uses_role_asset_with_original_clothing_and_scene(
         self, mock_thread: Mock
     ) -> None:
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as output_dir:
@@ -646,8 +640,8 @@ class WardrobeSwapTests(unittest.TestCase):
                         data={
                             "source_job_id": source.id,
                             "mode": "custom",
+                            "person_asset": "asset://asset-custom123",
                             "resolution": "720p",
-                            "custom_person_choice": "original",
                             "custom_clothing_choice": "original",
                             "custom_scene_choice": "original",
                         },
@@ -657,9 +651,9 @@ class WardrobeSwapTests(unittest.TestCase):
                 payload = response.get_json()
                 self.assertEqual(payload["kind"], "wardrobe_generate_custom")
                 kwargs = mock_thread.call_args.kwargs["kwargs"]
-                self.assertEqual(Path(kwargs["person_source"]).resolve(), person.resolve())
-                self.assertEqual(Path(kwargs["clothing_source"]).resolve(), clothing.resolve())
-                self.assertEqual(Path(kwargs["scene_source"]).resolve(), scene.resolve())
+                self.assertEqual(kwargs["person_source"], "asset://asset-custom123")
+                self.assertEqual(Path(kwargs["clothing_source"]), clothing)
+                self.assertEqual(Path(kwargs["scene_source"]), scene)
                 self.assertIn("完成随心换", kwargs["options"]["prompt"])
                 self.assertEqual(kwargs["options"]["model"], web_app.DEFAULT_SEEDANCE_25_MODEL)
                 with web_app.JOBS_LOCK:
@@ -670,7 +664,7 @@ class WardrobeSwapTests(unittest.TestCase):
                     web_app.JOBS.pop(source.id, None)
 
     @patch("web_app.threading.Thread")
-    def test_custom_generation_accepts_independent_uploaded_person_reference(
+    def test_custom_generation_role_asset_overrides_legacy_local_person_fields(
         self, mock_thread: Mock
     ) -> None:
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as output_dir:
@@ -702,6 +696,7 @@ class WardrobeSwapTests(unittest.TestCase):
                         data={
                             "source_job_id": source.id,
                             "mode": "custom",
+                            "person_asset": "asset://asset-custom456",
                             "resolution": "480p",
                             "custom_person_choice": "upload",
                             "custom_person_image": (io.BytesIO(self.image_bytes()), "replacement-person.png"),
@@ -713,12 +708,56 @@ class WardrobeSwapTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 202, response.get_data(as_text=True))
                 payload = response.get_json()
                 kwargs = mock_thread.call_args.kwargs["kwargs"]
-                self.assertNotEqual(Path(kwargs["person_source"]).resolve(), person.resolve())
-                self.assertTrue(Path(kwargs["person_source"]).is_file())
-                self.assertEqual(Path(kwargs["clothing_source"]).resolve(), clothing.resolve())
-                self.assertEqual(Path(kwargs["scene_source"]).resolve(), scene.resolve())
+                self.assertEqual(kwargs["person_source"], "asset://asset-custom456")
+                self.assertEqual(Path(kwargs["clothing_source"]), clothing)
+                self.assertEqual(Path(kwargs["scene_source"]), scene)
                 with web_app.JOBS_LOCK:
                     web_app.JOBS.pop(payload["id"], None)
+                response.close()
+            finally:
+                with web_app.JOBS_LOCK:
+                    web_app.JOBS.pop(source.id, None)
+
+    @patch("web_app.threading.Thread")
+    def test_custom_generation_rejects_local_person_without_active_role_asset(
+        self, mock_thread: Mock
+    ) -> None:
+        with tempfile.TemporaryDirectory() as source_dir:
+            source_root = Path(source_dir)
+            white = source_root / "white_model.mp4"
+            clothing = source_root / "original_clothing.png"
+            scene = source_root / "original_scene.png"
+            white.write_bytes(b"artifact")
+            clothing.write_bytes(self.image_bytes())
+            scene.write_bytes(self.image_bytes())
+            source = web_app.WebJob(
+                id="wardrobe-custom-local-person-rejected",
+                kind="wardrobe_prepare_custom",
+                project=web_app.WARDROBE_SWAP_PROJECT,
+                run_dir=source_root,
+                status="succeeded",
+                white_model_path=white,
+                clothing_path=clothing,
+                scene_path=scene,
+            )
+            with web_app.JOBS_LOCK:
+                web_app.JOBS[source.id] = source
+            try:
+                response = self.client.post(
+                    "/api/wardrobe-swap/generate",
+                    data={
+                        "source_job_id": source.id,
+                        "mode": "custom",
+                        "custom_person_choice": "upload",
+                        "custom_person_image": (io.BytesIO(self.image_bytes()), "raw-person.png"),
+                        "custom_clothing_choice": "original",
+                        "custom_scene_choice": "original",
+                    },
+                    content_type="multipart/form-data",
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("Active", response.get_json()["error"])
+                mock_thread.assert_not_called()
                 response.close()
             finally:
                 with web_app.JOBS_LOCK:

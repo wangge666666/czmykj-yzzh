@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>人物动作迁移 · DepthFlow Studio</title>
+  <link rel="stylesheet" href="/static/motion_transfer.css?v=20260911-2">
+  <script src="/static/motion_transfer.js?v=20260911-2" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/"><span>DF</span><div><b>DepthFlow Studio</b><small>人物动作迁移</small></div></a><a href="/">← 返回项目中心</a></header>
+  <div class="layout">
+    <aside><small>CHARACTER MOTION</small><h2>人物动作迁移</h2><nav><a href="#prepare">01　准备动作白膜</a><a href="#studio">02　视频制作</a><a href="#results">03　预览与下载</a></nav><button id="newProject" class="secondary" type="button">＋ 新建动作项目</button><label class="history">打开历史项目<select id="history"><option value="">选择已保存项目</option></select></label><small>素材、提示词和生成结果独立保存。</small></aside>
+    <main>
+      <section class="hero"><small>MOTION TRANSFER WORKSPACE</small><h1>保留动作，<em>重新构建画面。</em></h1><p>从原片中提取动作，让新人物在新场景中完成同一段表演。也可以用首帧画面与白膜视频直接开始制作。</p><div class="flow"><span>原片上传</span><i>→</i><span>人脸打码</span><i>→</i><span>动作白膜</span><i>→</i><span>人物 / 画面参考</span><i>→</i><span>新成片</span></div></section>
+      <p id="notice" class="notice" role="status" hidden></p>
+      <section id="prepare" class="panel">
+        <div class="heading"><div><small>01 / MOTION SOURCE</small><h2>准备动作白膜</h2></div><span class="tag">本地打码免费</span></div>
+        <div class="tabs" aria-label="动作来源"><button type="button" data-source="original" class="selected" aria-pressed="true">从原片提取动作</button><button type="button" data-source="white" aria-pressed="false">上传已有白膜</button></div>
+        <div id="originalSource">
+          <label class="upload">上传原片<input id="sourceFile" type="file" accept=".mp4,.mov"><small>MP4 / MOV，至少 2 秒；超过 15 秒使用前 15 秒。</small></label>
+          <button id="prepareBtn" type="button">生成人脸打码视频</button><small id="prepareReason" class="reason"></small>
+        </div>
+        <div id="whiteSource" hidden><label class="upload">上传参考白膜视频<input id="whiteFile" type="file" accept=".mp4,.mov"><small>MP4 / MOV · 2–15 秒 · 24–60 FPS。可用于下方两种制作方式。</small></label><button id="importBtn" type="button">导入白膜，进入制作</button><small id="importReason" class="reason"></small></div>
+        <div class="media-grid">
+          <article><h3>原片</h3><video id="sourcePreview" controls playsinline preload="metadata" hidden></video><p id="sourceEmpty" class="empty">上传后可预览原片</p></article>
+          <article><h3>打码预览</h3><video id="mosaicPreview" controls playsinline preload="metadata" hidden></video><p id="mosaicEmpty" class="empty">完成本地打码后显示</p><a id="mosaicDownload" hidden>下载打码视频 ↓</a><label class="check"><input id="mosaicReviewed" type="checkbox">已预览，确认人脸打码完整</label><button id="whiteBtn" type="button">生成白膜 · Seedance 2.0</button><small class="hint">480p · 预计 1 次付费视频任务</small><small id="whiteReason" class="reason"></small></article>
+          <article><h3>动作白膜</h3><video id="whitePreview" controls playsinline preload="metadata" hidden></video><p id="whiteEmpty" class="empty">生成或导入后显示</p><a id="whiteDownload" hidden>下载白膜视频 ↓</a><label class="check"><input id="whiteReviewed" type="checkbox">已预览，确认使用这段白膜动作</label><a href="#studio" class="next-link">进入视频制作 ↓</a></article>
+        </div>
+      </section>
+      <section id="studio" class="panel">
+        <div class="heading"><div><small>02 / VIDEO STUDIO</small><h2>视频制作</h2></div><span id="draftState" class="hint">草稿未保存</span></div>
+        <div class="tabs" aria-label="制作方式"><button type="button" data-mode="cast" class="selected" aria-pressed="true">场景＋多人物</button><button type="button" data-mode="frames" aria-pressed="false">首帧 / 尾帧参考</button></div>
+        <div id="castPane">
+          <div class="cast-layout"><div><label class="upload">目标场景 · @图片1<input id="sceneFile" type="file" accept="image/jpeg,image/png,image/webp,image/bmp"><small>场景只提供环境、材质与光照。</small></label><button id="scenePreviewButton" class="image-preview" type="button" hidden><img id="scenePreview" alt="目标场景"><span>点击放大</span></button></div><div>
+            <div class="subheading"><div><h3>新人物</h3><small>1–8 位人物；填写其对应的原片人物。</small></div></div>
+            <div class="role-actions"><button id="uploadRole" type="button">＋ 上传新人物</button><button id="addRole" type="button" class="secondary">从角色库看图选择</button></div>
+            <div id="selectedRoles" class="selected-roles"></div><p id="rolesEmpty" class="empty">上传人物图片到角色库，或选择已有角色。审核通过后即可用于制作。</p>
+            <div id="roleUploads" class="role-uploads" hidden><div class="subheading"><b>新人物入库进度</b><button id="refreshUploads" type="button" class="text-button">刷新审核状态</button></div><p id="uploadReviewState" class="hint" role="status"></p><div id="uploadList" aria-live="polite"></div></div>
+          </div></div>
+        </div>
+        <div id="framesPane" hidden><p class="hint">首帧必填，尾帧可选。白膜控制动作，首尾图片引导画面与人物外观；这是画面参考模式，不保证首尾帧逐像素一致。</p><div class="frame-grid"><div><label class="upload">首帧图 · @图片1<input id="firstFile" type="file" accept="image/jpeg,image/png,image/webp,image/bmp"></label><button id="firstPreviewButton" class="image-preview" type="button" hidden><img id="firstPreview" alt="首帧参考"><span>点击放大</span></button></div><div><label class="upload">尾帧图 · @图片2（可选）<input id="lastFile" type="file" accept="image/jpeg,image/png,image/webp,image/bmp"></label><button id="lastPreviewButton" class="image-preview" type="button" hidden><img id="lastPreview" alt="尾帧参考"><span>点击放大</span></button><button id="clearLast" type="button" class="text-button">移除尾帧</button></div></div></div>
+        <div class="prompt-area"><div class="subheading"><label for="prompt">编辑提示词</label><button id="defaultPrompt" type="button" class="secondary">填入当前模式示例</button></div><p class="hint">输入 @ 选择素材，或点击下方素材标签插入。@视频1 固定对应当前白膜。</p><div id="referenceChips" class="reference-chips"></div><div class="editor"><textarea id="prompt" rows="7" maxlength="1600" placeholder="例如：参考@视频1的动作，让@图片2中的人物在@图片1的场景中完成同样的表演。输入 @ 选择图片…" aria-describedby="promptHelp" aria-controls="mentionMenu"></textarea><div id="mentionMenu" class="mention-menu" role="listbox" aria-label="插入素材引用" hidden></div></div><div class="prompt-footer"><small id="promptHelp">图片编号与本次提交顺序一致；移除人物后会提示修正失效引用。</small><small id="promptCount">0 / 1600</small></div></div>
+        <div class="generation-settings"><label>成片清晰度<select id="resolution"><option value="720p">720p</option><option value="480p">480p</option></select></label><label class="check"><input id="generateAudio" type="checkbox">生成环境音效</label><div class="model-info"><b>Seedance 2.5</b><small>1 次视频任务 · 时长与比例跟随白膜</small></div></div>
+        <div class="actions"><button id="saveDraft" type="button" class="secondary">保存制作草稿</button><button id="generateBtn" type="button">生成人物动作迁移视频 →</button></div><small id="generateReason" class="reason"></small>
+      </section>
+      <section id="results" class="panel"><div class="heading"><div><small>03 / RESULTS</small><h2>进度与成片</h2></div><button id="refreshJob" type="button" class="secondary">刷新任务</button></div><div class="progress-heading"><b id="jobStage">等待准备动作素材</b><small id="jobId"></small></div><progress id="jobProgress" max="100" value="0"></progress><p id="jobError" class="error" hidden></p><button id="recoverBtn" type="button" class="secondary" hidden>查询已提交任务（不重复生成）</button><div id="outputs" class="outputs"></div><p id="outputsEmpty" class="empty">生成后的每条视频会保存在这里，可分别预览和下载。</p><details><summary>查看处理日志</summary><pre id="logs">尚无任务</pre></details></section>
+    </main>
+  </div>
+  <dialog id="roleDialog" class="role-dialog"><header><div><small>CHARACTER LIBRARY</small><h2>看图选择新人物</h2></div><button type="button" id="closeRoles" class="secondary">关闭</button></header><div class="filters"><label>搜索人物<input id="roleSearch" type="search" placeholder="名称或素材 ID"></label><label>人像组<select id="roleGroup"><option value="">全部人像组</option></select></label><button type="button" id="refreshRoles" class="secondary">刷新角色库</button></div><p id="libraryState" class="hint" aria-live="polite">正在读取角色库</p><div id="roleGrid" class="role-grid"></div></dialog>
+  <dialog id="roleUploadDialog" class="role-upload-dialog" aria-labelledby="roleUploadTitle">
+    <header><div><small>NEW CHARACTER</small><h2 id="roleUploadTitle">上传新人物到角色库</h2></div><button id="closeRoleUpload" type="button" class="secondary">关闭</button></header>
+    <p class="hint">选择人物图片并提交入库。审核通过后自动加入当前项目，可继续上传多位人物。</p>
+    <div class="role-upload-fields">
+      <div><label class="upload">人物图片<input id="roleUploadFile" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"><small>JPG / PNG / WEBP，单张不超过 30 MB。</small></label><button id="roleUploadPreviewButton" class="image-preview" type="button" hidden><img id="roleUploadPreview" alt="待上传的人物图片"><span>点击放大，确认本次使用的图片</span></button></div>
+      <div class="role-upload-details"><label>人物名称<input id="roleUploadName" maxlength="64" placeholder="例如：红衣女主"></label><label>保存到人像组<select id="roleUploadGroup"><option value="">请选择人像组</option></select></label><details id="roleGroupDetails"><summary>＋ 新建 AIGC 人像组</summary><label>人像组名称<input id="roleNewGroupName" maxlength="64" placeholder="例如：动作迁移人物"></label><button id="createRoleGroup" type="button" class="secondary">创建并选用</button></details></div>
+    </div>
+    <label class="check"><input id="roleUploadConsent" type="checkbox">我确认拥有该人物素材及本次生成用途的合法授权</label>
+    <p id="roleUploadStatus" role="status" class="hint"></p><div class="actions"><button id="submitRoleUpload" type="button">上传到角色库并用于制作</button></div><small id="roleUploadReason" class="reason"></small>
+  </dialog>
+  <dialog id="imageDialog" class="image-dialog"><header><h2 id="imageTitle">图片预览</h2><button type="button" id="closeImage" class="secondary">关闭大图</button></header><img id="fullImage" alt="图片预览"><p id="imageError" class="error" hidden>图片暂时无法加载，请刷新角色库后重试。</p></dialog>
+  <dialog id="paidDialog" class="paid-dialog"><small>付费任务确认</small><h2 id="paidTitle"></h2><p id="paidDescription"></p><div class="actions"><button type="button" id="paidCancel" class="secondary">取消</button><button type="button" id="paidSubmit">确认并提交</button></div></dialog>
+<script src="/static/cast_entry.js?v=20260915-colors2" defer></script></body>
+</html>

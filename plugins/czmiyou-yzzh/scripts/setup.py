@@ -96,14 +96,14 @@ def verify_installation(root):
     root = Path(root).resolve()
     runtime = root / "runtime"
     (root / "installation-check.json").write_text('{"local_ready": false, "status": "checking"}\n', encoding="utf-8")
-    inventory = json.loads((root / "SHA256SUMS.json").read_text())
+    inventory = json.loads((root / "SHA256SUMS.json").read_text(encoding="utf-8"))
     for relative, expected in inventory.items():
         path = (root / relative).resolve()
         path.relative_to(root)
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             raise RuntimeError("Installed file is missing or outdated: " + relative)
     for filename in (".codex-plugin/plugin.json", ".workbuddy-plugin/plugin.json", ".mcp.json", "workbuddy.mcp.json"):
-        if not isinstance(json.loads((root / filename).read_text()), dict):
+        if not isinstance(json.loads((root / filename).read_text(encoding="utf-8")), dict):
             raise RuntimeError("Invalid host configuration: " + filename)
     for filename in ("projects.html", "wardrobe.html", "long_video.html", "real_long_video.html"):
         if not (runtime / "web" / filename).is_file():

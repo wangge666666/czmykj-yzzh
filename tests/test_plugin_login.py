@@ -174,13 +174,13 @@ class LoginHTTPTests(unittest.TestCase):
     def test_both_ui_entries_require_explicit_identity_and_safe_errors(self):
         root = Path(__file__).resolve().parents[1]/'yzzh_local'/'web'
         for file in ('index.html','portal.js'):
-            text = (root/file).read_text()
+            text = (root/file).read_text(encoding="utf-8")
             self.assertIn('name="role"',text)
             self.assertIn('selected disabled',text)
             for role in LOGIN_ROLES:
                 self.assertIn(f'value="{role}"',text)
         for file in ('app.js','portal.js'):
-            text = (root/file).read_text()
+            text = (root/file).read_text(encoding="utf-8")
             for code in ('LOGIN_CREDENTIALS_INVALID','LOGIN_ROLE_NOT_APPROVED','INVALID_LOGIN_ROLE','LOGIN_REJECTED'):
                 self.assertIn(code,text)
 

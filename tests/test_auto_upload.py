@@ -212,7 +212,7 @@ class AutoUploadTests(unittest.TestCase):
             cls.return_value.upload_video.assert_called_once()
 
     def test_ui_keeps_storage_optional_and_discloses_upload(self):
-        portal = (Path(__file__).parents[1] / "yzzh_local/web/portal.js").read_text()
+        portal = (Path(__file__).parents[1] / "yzzh_local/web/portal.js").read_text(encoding="utf-8")
         self.assertIn("素材由插件自动上传", portal)
         self.assertIn("高级设置 · 模型与上传方式", portal)
         self.assertIn('class="tos-fields" hidden', portal)

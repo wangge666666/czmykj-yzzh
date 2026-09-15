@@ -272,6 +272,30 @@ class YuNetFaceDetector:
         ]
 
 
+def detect_faces_all_orientations(detector: YuNetFaceDetector, frame: np.ndarray) -> list[Box]:
+    """Detect every face, including sideways faces, in original-frame coordinates."""
+    height, width = frame.shape[:2]
+    boxes = list(detector.detect(frame))
+    for rotation in (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180, cv2.ROTATE_90_COUNTERCLOCKWISE):
+        for x, y, w, h in detector.detect(cv2.rotate(frame, rotation)):
+            if rotation == cv2.ROTATE_90_CLOCKWISE:
+                mapped = (y, height-x-w, h, w)
+            elif rotation == cv2.ROTATE_180:
+                mapped = (width-x-w, height-y-h, w, h)
+            else:
+                mapped = (width-y-h, x, h, w)
+            mapped = _clip_box(mapped, width, height)
+            duplicate = next((i for i, box in enumerate(boxes) if _iou(box, mapped) >= .4), None)
+            if duplicate is None:
+                boxes.append(mapped)
+            else:
+                # Union overlapping detections so deduplication cannot uncover a face edge.
+                a, b = boxes[duplicate], mapped
+                left, top = min(a[0], b[0]), min(a[1], b[1])
+                boxes[duplicate] = (left, top, max(a[0]+a[2], b[0]+b[2])-left, max(a[1]+a[3], b[1]+b[3])-top)
+    return boxes
+
+
 def apply_pixel_mosaic(frame: np.ndarray, boxes: Iterable[Box], *, block_size: int = 18) -> np.ndarray:
     """Apply an opaque nearest-neighbour pixel mosaic to every supplied box."""
     height, width = frame.shape[:2]
@@ -412,6 +436,7 @@ def render_face_mosaic_video(
     score_threshold: float = 0.55,
     on_progress: Callable[[int, int, int], None] | None = None,
     on_log: Callable[[str], None] | None = None,
+    detect_rotated_faces: bool = False,
 ) -> dict[str, int | str]:
     """Detect and track all visible faces, then render an H.264 MP4 with source audio."""
     source = Path(input_path).expanduser().resolve()
@@ -419,8 +444,7 @@ def render_face_mosaic_video(
     if source == target:
         raise WorkflowError("打码视频不能覆盖原片。")
     info = inspect_video(source)
-    model_path = ensure_face_model(on_log=on_log)
-    detector = YuNetFaceDetector(model_path, score_threshold=score_threshold)
+    detector = YuNetFaceDetector(ensure_face_model(on_log=on_log), score_threshold=score_threshold)
     tracker = FaceBoxTracker(max_missed=max(5, int(round(info.fps * 0.25))))
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -451,7 +475,7 @@ def render_face_mosaic_video(
             ok, frame = capture.read()
             if not ok or frame is None:
                 break
-            detections = detector.detect(frame)
+            detections = detect_faces_all_orientations(detector, frame) if detect_rotated_faces else detector.detect(frame)
             tracked = tracker.update(detections, frame_width=info.width, frame_height=info.height)
             expanded = [expand_face_box(box, info.width, info.height) for box in tracked]
             if expanded:

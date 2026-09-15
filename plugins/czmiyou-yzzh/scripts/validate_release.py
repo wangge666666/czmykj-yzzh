@@ -23,6 +23,8 @@ EXPECTED_FILES.update('runtime/web/' + name for name in (
     'projects.css', 'clothing.js', 'multi.html', 'real_long_video.html', 'scene.js', 'styles.css', 'person.css',
     'index.html', 'long_video.js', 'multi.js', 'project_registry.js', 'wardrobe.js'))
 
+EXPECTED_FILES.update("runtime/" + name for name in ['cast_colors.py', 'inline_cast.py', 'motion_transfer.py', 'motion_video.py', 'multi_cast.py', 'video_proxy_rules.py', 'wardrobe_audio.py', 'wardrobe_continuation.py', 'wardrobe_dynamic.py', 'wardrobe_full_rewrite.py', 'wardrobe_intervals.py', 'wardrobe_object.py', 'wardrobe_rewrite_sources.py', 'wardrobe_segments.py'])
+EXPECTED_FILES.update("runtime/web/" + name for name in ['cast_entry.js', 'character_library.css', 'inline_cast.js', 'motion_transfer.css', 'motion_transfer.html', 'motion_transfer.js', 'wardrobe_audio.js', 'wardrobe_continuation.css', 'wardrobe_continuation.html', 'wardrobe_continuation.js', 'wardrobe_object.html', 'wardrobe_object.js', 'wardrobe_scene.html', 'wardrobe_segments.js'])
 
 def relative_name(path, root):
     return path.relative_to(root).as_posix()

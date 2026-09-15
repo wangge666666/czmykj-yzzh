@@ -82,7 +82,7 @@ class PortalLauncherTests(unittest.TestCase):
         self.assertEqual(error.exception.code,'PRODUCT_4_LICENSE_REQUIRED')
 
     def test_browser_contract_checks_origin_window_state_no_token_urls(self):
-        source = (Path(__file__).parents[1]/'yzzh_local/web/launch.js').read_text()
+        source = (Path(__file__).parents[1]/'yzzh_local/web/launch.js').read_bytes().decode('utf-8')
         response = self.client.get('/_plugin/launch.js',base_url=self.base)
         self.assertEqual(response.status_code,200)
         self.assertEqual(response.data.decode(),source)
@@ -102,7 +102,7 @@ class PortalLauncherTests(unittest.TestCase):
         self.assertIn('on open location ignoredURL',script)
         self.assertNotIn('& ignoredURL',script)
         self.assertIn('\\"',script)
-        source = (root/'scripts/start_local.py').read_text()
+        source = (root/'scripts/start_local.py').read_text(encoding="utf-8")
         self.assertNotIn('sys.argv',source)
         self.assertNotIn('shell=True',source)
 

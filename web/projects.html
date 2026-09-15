@@ -22,9 +22,9 @@
     <section class="hero">
       <div class="eyebrow">VIDEO REPLICATION WORKSPACE</div>
       <h1>选择要使用的<br><em>视频复刻项目</em></h1>
-      <p>三个项目使用同一套页面外壳与基础能力，但生成流程、任务状态和结果彼此隔离。局部替换统一进入“衣装智换”，完整复刻由虚拟或真实人物长视频重绘承担。</p>
+      <p>四个项目覆盖衣装智换、虚拟与真实人物长视频重绘，以及人物动作迁移。选择对应工作台，准备素材并查看独立的生成进度与结果。</p>
       <div class="hero-summary" aria-label="项目概览">
-        <span><b>2</b> 个能力组</span><span><b>3</b> 个独立项目</span><span><b>1</b> 套统一操作外壳</span>
+        <span><b>3</b> 个能力组</span><span><b>4</b> 个独立项目</span><span><b>1</b> 套统一操作外壳</span>
       </div>
     </section>
 
@@ -36,13 +36,13 @@
 
       <div class="project-grid">
         <article class="project-card project-card-wide project-card-active" data-project-id="wardrobe">
-          <div class="card-top"><span class="project-number">03–05</span><span class="status status-ready"><i></i>三合一</span></div>
+          <div class="card-top"><span class="project-number">03–05</span><span class="status status-ready"><i></i>八种功能</span></div>
           <div class="wide-content">
             <div>
               <div class="card-title"><span class="card-symbol">衣</span><div><h3>衣装智换</h3><p>Character · Scene · Wardrobe replacement</p></div></div>
-              <p class="card-description">先对原片人脸打码并生成白膜动作母版，再选择只更换人物、场景、服装，或在“随心换”中自由组合三类参考；缺失的原片参考由 Seedream 5.0 提取，最终由 Seedance 2.5 生成。</p>
+              <p class="card-description">支持只更换人物、只更换场景、只更换服装，或在“随心换”中自由组合三类参考。运动镜头可更换人物、物品或场景；动态物品替换支持主角白模加人物服装参考，或直接引用角色库原片视频。最终由 Seedance 2.5 生成。</p>
             </div>
-            <div class="shot-flow" aria-label="衣装智换四种功能"><span>原片打码</span><i>→</i><span>白膜母版</span><i>→</i><div><b>只更换人物</b><b>只更换场景</b><b>只更换服装</b><b>随心换</b></div><i>→</i><span>Seedance 2.5</span></div>
+            <div class="shot-flow" aria-label="衣装智换八种功能"><span>原片母版</span><i>→</i><div><b>人物 / 场景 / 服装</b><b>随心换</b><b>动态人物替换</b><b>动态物品替换</b><b>动态场景替换</b><b>按秒改写视频</b></div><i>→</i><span>Seedance 2.5</span></div>
           </div>
           <a class="project-action" href="/projects/wardrobe">进入衣装智换 <span>→</span></a>
         </article>
@@ -70,17 +70,22 @@
           </div>
           <a class="project-action" href="/projects/real-long-video">进入真实人物项目 <span>→</span></a>
         </article>
+        <article class="project-card project-card-wide project-card-active" data-project-id="motion-transfer">
+          <div class="card-top"><span class="project-number">04</span><span class="status status-ready"><i></i>独立项目</span></div>
+          <div class="wide-content"><div><div class="card-title"><span class="card-symbol">动</span><div><h3>人物动作迁移</h3><p>Character motion transfer</p></div></div><p class="card-description">原片打码后生成动作白膜，再用场景、多位角色库人物与可编辑的 @图片 提示词制作新片；也可上传首尾帧参考和已有白膜。</p></div><div class="shot-flow"><span>原片打码</span><i>→</i><span>动作白膜</span><i>→</i><div><b>场景＋多人物</b><b>首尾帧参考</b></div><i>→</i><span>动作迁移成片</span></div></div>
+          <a class="project-action" href="/projects/motion-transfer">进入人物动作迁移 <span>→</span></a>
+        </article>
       </div>
     </section>
 
     <section class="architecture-note">
       <div><span>冻结原则</span><h2>能用的项目保持稳定，新能力独立生长。</h2></div>
-      <p>导航、错误提示、付费说明和媒体对比由公共层提供；衣装智换与两个长视频项目继续保持各自的数据结构、提示词模板和任务接口，避免一处修改破坏其他已验证流程。旧局部替换页面仅保留为历史兼容，不再作为首页入口。</p>
+      <p>每个项目拥有独立的素材、任务与结果存档。衣装智换、两个长视频项目和人物动作迁移使用各自的生成流程，完成的视频可随时预览与下载。</p>
     </section>
   </main>
 
   <footer><span>米哟无限复刻</span><small>本地工作台 · 素材与结果保存在你的电脑中</small></footer>
-  <script src="/static/project_registry.js?v=20260823-2" defer></script>
+  <script src="/static/project_registry.js?v=20260915-sync1" defer></script>
   <script src="/static/projects.js?v=20260823-2" defer></script>
 </body>
 </html>

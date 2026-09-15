@@ -69,7 +69,7 @@ class OriginalTests(unittest.TestCase):
             response = self.call(path)
             self.assertEqual(response.status_code, 200, path)
             html = response.data.decode()
-            original = (SOURCE / 'web' / name).read_text()
+            original = (SOURCE / 'web' / name).read_text(encoding="utf-8")
             self.assertIn('<script src="/_plugin/portal.js"></script>', html)
             import re
             restored = re.sub(r'<meta name="yzzh-owner"[^>]*><meta name="yzzh-context"[^>]*><meta name="yzzh-service-mode"[^>]*><script src="/_plugin/portal.js"></script>', '', html)

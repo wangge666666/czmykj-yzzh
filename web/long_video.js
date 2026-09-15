@@ -477,6 +477,7 @@ function shotCard(shot, job) {
     const detected = personSlots[offset] || {};
     const position = performanceSlotAnchor(shot, offset + 1);
     const characterId = continuityCharacterFor(shot, offset + 1);
+    const modelColor = ({red:"红",white:"白",blue:"蓝",yellow:"黄"})[shot.white_color_plan?.find(r => r.id === `p${offset+1}`)?.color] || "";
     const hasSemanticSlot = (shot?.performance?.performance || []).some((item) => Number(item.actor_slot) === offset + 1);
     const confidence = hasSemanticSlot
       ? " · 来自台词表演分析"
@@ -484,7 +485,7 @@ function shotCard(shot, job) {
     const options = `<option value="0" ${!actorId ? "selected" : ""}>请选择对应人物</option>` + Array.from({ length: state.actorCount }, (_value, actorOffset) => actorOffset + 1).map((optionId) =>
       `<option value="${optionId}" ${optionId === actorId ? "selected" : ""}>人物${optionId} · ${escapeHtml(actorRole(optionId))}</option>`
     ).join("");
-    return `<div class="person-map-row"><span><b>表演槽位 P${offset + 1}${characterId ? ` · 原片身份 C${characterId}` : ""}</b><small>${escapeHtml(position)}${confidence}</small></span><i>替换为</i><select data-person-mapping="${index}" data-person-slot="${offset + 1}" ${disabled}>${options}</select><label class="position-lock-field"><span>位置与动作锁定</span><input data-position-lock="${index}" data-position-slot="${offset + 1}" maxlength="220" value="${escapeHtml(positionLockValue(shot, offset + 1))}" placeholder="例如：左侧内景坐着，较小；右侧前景站着，较大" ${disabled}></label></div>`;
+    return `<div class="person-map-row"><span><b>表演槽位 P${offset + 1}${modelColor ? ` · ${modelColor}模` : ""}${characterId ? ` · 原片身份 C${characterId}` : ""}</b><small>${escapeHtml(position)}${confidence}</small></span><i>替换为</i><select data-person-mapping="${index}" data-person-slot="${offset + 1}" ${disabled}>${options}</select><label class="position-lock-field"><span>位置与动作锁定</span><input data-position-lock="${index}" data-position-slot="${offset + 1}" maxlength="220" value="${escapeHtml(positionLockValue(shot, offset + 1))}" placeholder="例如：左侧内景坐着，较小；右侧前景站着，较大" ${disabled}></label></div>`;
   }).join("");
   const assignment = sceneAssignmentFor(index);
   const selectedGroup = assignment ? sceneGroupById(assignment.groupId) : null;
@@ -827,6 +828,7 @@ function whiteModelForm(regenerationMode = "normal", forceShots = []) {
   const form = new FormData();
   form.append("source_job_id", state.jobId);
   form.append("privacy_review_confirmed", "true");
+  form.append("colored_cast", document.querySelector("#coloredCastEnabled")?.checked ? "true" : "false");
   form.append("white_regeneration_mode", regenerationMode);
   form.append("force_white_shots", JSON.stringify(forceShots));
   appendBasicVideoOptions(form);

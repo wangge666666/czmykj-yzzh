@@ -7,11 +7,32 @@ import subprocess
 import sys
 from pathlib import Path, PureWindowsPath, PurePosixPath
 import runpy
+import os
 
 from scripts.build_hybrid_plugin import build
 
 
 class PackageTests(unittest.TestCase):
+    def test_new_video_workflows_import_and_serve_from_the_extracted_bundle(self):
+        with tempfile.TemporaryDirectory() as root:
+            archive = build(Path(root) / 'new-workflows.zip')
+            with zipfile.ZipFile(archive) as bundle:
+                bundle.extractall(root)
+            runtime = Path(root) / 'czmiyou-yzzh' / 'runtime'
+            env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONUTF8='1')
+            env.pop('PYTHONPATH', None)
+            script = '''import web_app
+client = web_app.app.test_client()
+for page in ('/projects/wardrobe', '/projects/motion-transfer', '/projects/wardrobe-continuation'):
+    response = client.get(page)
+    assert response.status_code == 200, page
+print('bundled workflows imported and served')
+'''
+            result = subprocess.run([sys.executable, '-c', script], cwd=runtime, env=env,
+                                    capture_output=True, text=True, encoding='utf-8', timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('bundled workflows imported and served', result.stdout)
+
     def test_template_must_be_empty_even_if_inventory_is_rehashed(self):
         with tempfile.TemporaryDirectory() as root:
             archive=build(Path(root)/'customer.zip')

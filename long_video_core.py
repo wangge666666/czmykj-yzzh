@@ -756,11 +756,18 @@ def split_video_shots(
     return outputs
 
 
+def video_has_audio(path: str | Path) -> bool:
+    result = subprocess.run([str(resolve_ffmpeg()), '-hide_banner', '-i', str(path)],
+                            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30)
+    return 'Audio:' in result.stderr
+
+
 def pad_video_with_trailing_black(
     source_path: str | Path,
     output_path: str | Path,
     *,
     minimum_duration: float = 2.0,
+    with_audio: bool = False,
 ) -> Path:
     """Append pure black frames until a short reference reaches the minimum duration.
 
@@ -791,11 +798,15 @@ def pad_video_with_trailing_black(
             f"setpts=PTS-STARTPTS,fps={target_fps},"
             f"tpad=stop_mode=add:stop_duration={minimum_duration:.6f}:color=black"
         ),
-        "-t", f"{minimum_duration:.6f}", "-an",
+        "-t", f"{minimum_duration:.6f}",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-pix_fmt", "yuv420p", "-r", str(target_fps), "-fps_mode", "cfr",
         "-movflags", "+faststart", str(output),
     ]
+    if with_audio:
+        command[-1:-1] = ['-map', '0:a:0?', '-af', f'apad=pad_dur={minimum_duration:.6f}', '-c:a', 'aac', '-b:a', '160k']
+    else:
+        command[-1:-1] = ['-an']
     _run_ffmpeg(command, "短分镜深度视频片尾补黑")
     if not output.is_file() or output.stat().st_size == 0:
         raise WorkflowError("深度视频补黑已结束，但没有生成有效文件。")
@@ -1005,6 +1016,8 @@ def mux_original_audio(
     video_path: str | Path,
     original_path: str | Path,
     output_path: str | Path,
+    *,
+    preserve_video_duration: bool = False,
 ) -> Path:
     video = Path(video_path).expanduser().resolve()
     original = Path(original_path).expanduser().resolve()
@@ -1012,9 +1025,15 @@ def mux_original_audio(
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [
         str(resolve_ffmpeg()), "-hide_banner", "-loglevel", "error", "-y",
-        "-i", str(video), "-i", str(original), "-map", "0:v:0", "-map", "1:a?",
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(output),
+        "-i", str(video), "-i", str(original), "-map", "0:v:0", "-map", "1:a:0?",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
     ]
+    if preserve_video_duration:
+        # Some source audio ends before its video. Pad silence, never truncate the picture.
+        command += ["-af", "apad", "-t", f"{inspect_video(video).duration:.8f}"]
+    else:
+        command += ["-shortest"]
+    command += ["-movflags", "+faststart", str(output)]
     _run_ffmpeg(command, "恢复原片音轨")
     return output
 

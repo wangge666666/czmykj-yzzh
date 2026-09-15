@@ -182,7 +182,12 @@ class PlatformBridgeTests(unittest.TestCase):
         outside = self.root / "outside.png"
         outside.write_bytes(b"synthetic image outside worker")
         link = self.worker_root / "escape.png"
-        link.symlink_to(outside)
+        try:
+            link.symlink_to(outside)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                self.skipTest("This Windows account cannot create symbolic links")
+            raise
         for source in (outside, link):
             with self.subTest(source=source.name):
                 payload = {"path": str(source)}
@@ -311,7 +316,7 @@ class PlatformBridgeTests(unittest.TestCase):
         guard.callback.assert_not_called()
 
     def test_cli_default_is_platform_and_byok_requires_explicit_selection(self):
-        tree = ast.parse((Path(__file__).parents[1] / "yzzh_local/app.py").read_text())
+        tree = ast.parse((Path(__file__).parents[1] / "yzzh_local/app.py").read_text(encoding="utf-8"))
         option = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
                       and isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument"
                       and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "--mode")
@@ -323,7 +328,7 @@ class PlatformBridgeTests(unittest.TestCase):
         # Exercise the actual response adapter without starting a worker, model,
         # HTTP listener, or reading its private runtime configuration.
         path = Path(__file__).parents[1] / "yzzh_local/original_worker.py"
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         function = copy.deepcopy(next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "safe_result"))
         function.decorator_list = []
         module = ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[]))

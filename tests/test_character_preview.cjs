@@ -45,7 +45,7 @@ async function fixture(initial = library()) {
   fileNode.files = [selectedFile];
   const calls = [], toasts = [], replies = [initial], navigation = [];
   const document = {
-    hidden: false,
+    hidden: false, head: element(), dispatchEvent() {},
     querySelector(selector) {
       return {'#characters': host, '#personAsset': person}[selector] || null;
     },

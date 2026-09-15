@@ -34,13 +34,19 @@ class AtomicJobRecordTests(unittest.TestCase):
                 original_replace = os.replace
                 temporary_paths = []
                 observed_records = []
+                first_attempt_lock = threading.Lock()
 
                 def synchronized_replace(source, destination):
-                    temporary_paths.append(Path(source))
-                    observed_records.append(json.loads(target.read_text(encoding="utf-8")))
+                    with first_attempt_lock:
+                        first_attempt = Path(source) not in temporary_paths
+                        if first_attempt:
+                            temporary_paths.append(Path(source))
+                            observed_records.append(json.loads(target.read_text(encoding="utf-8")))
                     # Both writers finish their temporary file before either
                     # rename runs. A shared .tmp deterministically loses here.
-                    barrier.wait(timeout=5)
+                    # Windows lock retries must not wait for an already finished writer.
+                    if first_attempt:
+                        barrier.wait(timeout=5)
                     return original_replace(source, destination)
 
                 with patch("os.replace", side_effect=synchronized_replace):
@@ -53,6 +59,44 @@ class AtomicJobRecordTests(unittest.TestCase):
                 self.assertTrue(all(path.parent == root for path in temporary_paths))
                 self.assertIn(json.loads(target.read_text(encoding="utf-8")), records)
                 self.assertEqual(list(root.iterdir()), [target])
+
+    @unittest.skipUnless(os.name == "nt", "Windows file-sharing behavior")
+    def test_windows_transient_lock_retries_and_publishes_complete_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            target = save_job_record(root, {"stage": "previous"})
+            original_replace = os.replace
+            calls = []
+
+            def locked_once(source, destination):
+                calls.append(Path(source))
+                if len(calls) == 1:
+                    self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"stage": "previous"})
+                    error = PermissionError("synthetic sharing violation")
+                    error.winerror = 32
+                    raise error
+                return original_replace(source, destination)
+
+            with patch("os.replace", side_effect=locked_once), patch("workflow_core.time.sleep"):
+                save_job_record(root, {"stage": "complete"})
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0], calls[1])
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"stage": "complete"})
+            self.assertEqual(list(root.iterdir()), [target])
+
+    @unittest.skipUnless(os.name == "nt", "Windows file-sharing behavior")
+    def test_windows_permanent_lock_is_bounded_and_preserves_previous_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            target = save_job_record(root, {"stage": "previous"})
+            error = PermissionError("synthetic sharing violation")
+            error.winerror = 32
+            with patch("os.replace", side_effect=error) as replace, patch("workflow_core.time.sleep"):
+                with self.assertRaises(PermissionError):
+                    save_job_record(root, {"stage": "new"})
+            self.assertEqual(replace.call_count, 10)
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"stage": "previous"})
+            self.assertEqual(list(root.iterdir()), [target])
 
     def test_failed_publication_preserves_the_previous_record_and_cleans_its_temporary_file(self):
         for name in ("job", "manifest"):

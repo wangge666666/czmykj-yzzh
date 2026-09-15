@@ -1,5 +1,6 @@
 """BYOK tests use synthetic media and fixture credentials, never paid services."""
 import copy
+import os
 import json
 import shutil
 import subprocess
@@ -169,7 +170,8 @@ class RuntimeTests(unittest.TestCase):
     def test_settings_are_account_scoped_private_and_never_returned_to_mcp(self):
         key, _ = self.plan()
         public = self.runtime.provider_settings()
-        self.assertEqual(self.runtime.settings.path(7).stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":  # POSIX mode bits do not represent Windows ACLs.
+            self.assertEqual(self.runtime.settings.path(7).stat().st_mode & 0o777, 0o600)
         for secret in ('fixture-ark-not-real','fixture-ak','fixture-sk'):
             self.assertNotIn(secret,json.dumps(public))
         self.account['user_id'] = 8

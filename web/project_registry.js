@@ -1,18 +1,25 @@
 (function () {
   const categories = [
-    { id: "partial", number: "01", title: "局部替换", subtitle: "一个项目内只修改人物、场景或服装", projects: ["wardrobe"] },
+    { id: "partial", number: "01", title: "局部替换与剧情改写", subtitle: "更换人物、服装、物品和场景，或按秒改写指定片段", projects: ["wardrobe"] },
     { id: "long", number: "02", title: "长视频重绘", subtitle: "分镜、表演、白膜与连续成片，可承担单人或多人完整复刻", projects: ["long-video", "real-long-video"] },
+    { id: "motion", number: "03", title: "动作迁移", subtitle: "复用原片动作，用新人物或首尾画面参考制作新片", projects: ["motion-transfer"] },
   ];
 
   const projects = {
+    "motion-transfer": {
+      number: "04", category: "motion", path: "/projects/motion-transfer", title: "人物动作迁移", ownShell: true,
+      summary: "原片打码并生成白膜后，用场景、多位角色库人物与 @图片 提示词制作新片；也可使用首尾画面参考与已有白膜。",
+      steps: [{id:"prepare",label:"准备动作白膜"},{id:"studio",label:"视频制作"},{id:"results",label:"预览与下载"}],
+      paidActions: {},
+    },
     wardrobe: {
       number: "01", category: "partial", path: "/projects/wardrobe", title: "衣装智换",
-      summary: "打码原片并生成白膜母版，在同一工作台中单独替换人物、场景、服装，或使用随心换自由组合三类参考。",
+      summary: "在同一工作台中更换人物、服装与场景；运动镜头支持人物、物品和场景分别替换。也可按原片秒数改写开头、中间或结尾的多个区间，其余部分保留。",
       ownShell: true,
       steps: [
         { id: "mode", label: "选择功能", hint: "人物 / 场景 / 服装" },
-        { id: "source", label: "上传原片", hint: "最长 30 秒" },
-        { id: "prepare", label: "打码与白膜", hint: "Seedance 2.5 · 480p" },
+        { id: "source", label: "上传原片", hint: "替换流程最长 15 秒" },
+        { id: "prepare", label: "原片与白模", hint: "Seedance 2.0 · 480p" },
         { id: "references", label: "人物与素材", hint: "角色库与参考图" },
         { id: "generate", label: "生成成片", hint: "Seedance 2.5" },
         { id: "result", label: "预览下载", hint: "打码 / 白膜 / 成片" },
