@@ -1,19 +1,26 @@
 {
   "name": "czmiyou-yzzh",
-  "version": "0.5.0",
-  "description": "米哟无限复刻平台接入预览：登录米哟，三个项目共用平台服务；管理员配置供应商密钥与计费",
+  "version": "0.5.0+codex.20260920010447",
+  "description": "\u7c73\u54df\u65e0\u9650\u590d\u523b\u5e73\u53f0\u63a5\u5165\u9884\u89c8\uff1a\u767b\u5f55\u7c73\u54df\uff0c\u4e09\u4e2a\u9879\u76ee\u5171\u7528\u5e73\u53f0\u670d\u52a1\uff1b\u7ba1\u7406\u5458\u914d\u7f6e\u4f9b\u5e94\u5546\u5bc6\u94a5\u4e0e\u8ba1\u8d39",
   "author": {
     "name": "CZMIYOU"
   },
   "skills": "./skills/",
   "interface": {
-    "displayName": "米哟无限复刻",
-    "shortDescription": "登录米哟，三项目共用平台服务，本地基础处理",
-    "longDescription": "平台接入开发预览：衣装智换、虚拟人物和写实虚拟人像共用登录、素材、通道与中央计费。供应商 Key 由管理员留在服务器，用户逐次确认上传及生成。含本地基础模型安装；服务器发布、真实生成和账单仍需分别验收。BYOK 仅显式历史兼容，不自动切换后台模式。",
+    "displayName": "\u7c73\u54df\u65e0\u9650\u590d\u523b",
+    "shortDescription": "\u767b\u5f55\u7c73\u54df\uff0c\u4e09\u9879\u76ee\u5171\u7528\u5e73\u53f0\u670d\u52a1\uff0c\u672c\u5730\u57fa\u7840\u5904\u7406",
+    "longDescription": "\u5e73\u53f0\u63a5\u5165\u5f00\u53d1\u9884\u89c8\uff1a\u8863\u88c5\u667a\u6362\u3001\u865a\u62df\u4eba\u7269\u548c\u5199\u5b9e\u865a\u62df\u4eba\u50cf\u5171\u7528\u767b\u5f55\u3001\u7d20\u6750\u3001\u901a\u9053\u4e0e\u4e2d\u592e\u8ba1\u8d39\u3002\u4f9b\u5e94\u5546 Key \u7531\u7ba1\u7406\u5458\u7559\u5728\u670d\u52a1\u5668\uff0c\u7528\u6237\u9010\u6b21\u786e\u8ba4\u4e0a\u4f20\u53ca\u751f\u6210\u3002\u542b\u672c\u5730\u57fa\u7840\u6a21\u578b\u5b89\u88c5\uff1b\u670d\u52a1\u5668\u53d1\u5e03\u3001\u771f\u5b9e\u751f\u6210\u548c\u8d26\u5355\u4ecd\u9700\u5206\u522b\u9a8c\u6536\u3002BYOK \u4ec5\u663e\u5f0f\u5386\u53f2\u517c\u5bb9\uff0c\u4e0d\u81ea\u52a8\u5207\u6362\u540e\u53f0\u6a21\u5f0f\u3002",
     "developerName": "CZMIYOU",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Write"],
-    "defaultPrompt": ["打开米哟无限复刻项目中心", "查看衣装智换任务进度", "把我选择的视频分镜并预览"]
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "\u6253\u5f00\u7c73\u54df\u65e0\u9650\u590d\u523b\u9879\u76ee\u4e2d\u5fc3",
+      "\u67e5\u770b\u8863\u88c5\u667a\u6362\u4efb\u52a1\u8fdb\u5ea6",
+      "\u628a\u6211\u9009\u62e9\u7684\u89c6\u9891\u5206\u955c\u5e76\u9884\u89c8"
+    ]
   },
   "mcpServers": "./.mcp.json"
 }
